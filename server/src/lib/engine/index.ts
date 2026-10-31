@@ -139,9 +139,12 @@ export interface EngineClient {
 const isJsonObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+const hasSessions = (value: unknown): value is { sessions: unknown[] } =>
+  isJsonObject(value) && Array.isArray(Reflect.get(value, "sessions"));
+
 const buildValidationSchedule = (dataset: Prisma.InputJsonObject): Record<string, unknown> => {
   const base = dataset.published_timetable;
-  if (!isJsonObject(base) || !Array.isArray(base.sessions)) {
+  if (!hasSessions(base)) {
     throw new ValidationError("A published timetable is required when validating booking changes.", "ENGINE_INPUT_INVALID");
   }
   const bookingRequests = Array.isArray(dataset.booking_requests) ? dataset.booking_requests : [];
@@ -174,10 +177,9 @@ const buildValidationSchedule = (dataset: Prisma.InputJsonObject): Record<string
       displaced_by: item.request_id,
     }];
   });
-  return {
-    ...base,
-    fest_week: { bookings: decisions, session_overrides: sessionOverrides },
-  };
+  const schedule = Object.fromEntries(Object.entries(base));
+  schedule.fest_week = { bookings: decisions, session_overrides: sessionOverrides };
+  return schedule;
 };
 
 const scheduleSessions = (

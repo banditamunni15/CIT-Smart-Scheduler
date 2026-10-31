@@ -92,7 +92,7 @@ export function TimetableGrid({
           <div className="grid grid-cols-[76px_repeat(5,minmax(160px,1fr))]">
             <div
               className="grid border-r"
-              style={{ gridTemplateRows: "repeat(5, 64px) 28px repeat(4, 64px)" }}
+              style={{ gridTemplateRows: "repeat(5, 72px) 28px repeat(4, 72px)" }}
             >
               {periods.map((period) => (
                 <div
@@ -143,7 +143,7 @@ export function TimetableGrid({
                 laneById.set(entry.id, lane);
               }
               const laneCount = Math.max(
-                2,
+                1,
                 ...Array.from(laneById.values(), (lane) => lane + 1),
               );
               return (
@@ -152,7 +152,7 @@ export function TimetableGrid({
                   className="relative grid border-r last:border-r-0"
                   style={{
                     gridTemplateColumns: `repeat(${laneCount}, minmax(0, 1fr))`,
-                    gridTemplateRows: "repeat(5, 64px) 28px repeat(4, 64px)",
+                    gridTemplateRows: "repeat(5, 72px) 28px repeat(4, 72px)",
                   }}
                 >
                   {periods.map((period) => (
@@ -188,7 +188,7 @@ export function TimetableGrid({
                         type="button"
                         onClick={() => openEntry(entry)}
                         aria-label={`${entry.courseTitle}, ${slotFor(entry, mode)}, ${day} period ${entry.startPeriod}`}
-                        className="z-10 m-1 flex min-w-0 flex-col items-start overflow-hidden rounded-md border border-gray-200 bg-white p-2 text-left text-xs hover:bg-gray-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                        className="z-10 m-1 flex min-w-0 flex-col items-start overflow-hidden rounded-md border border-gray-200 bg-white p-1.5 text-left text-xs hover:bg-gray-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
                         style={{
                           gridColumn: `${lane + 1}`,
                           gridRow: `${rowForPeriod(entry.startPeriod)} / ${rowForPeriod(endPeriod) + 1}`,
@@ -197,11 +197,11 @@ export function TimetableGrid({
                         <span className="w-full truncate font-semibold">
                           {entry.courseId}
                         </span>
-                        <span className="w-full truncate text-muted-foreground">
-                          {entry.roomId}
-                        </span>
-                        <span className="mt-1 rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                          {kindLabel(entry.kind)}
+                        <span className="flex w-full min-w-0 items-center gap-1 text-muted-foreground">
+                          <span className="min-w-0 flex-1 truncate">{entry.roomId}</span>
+                          <span className="shrink-0 rounded border px-1.5 py-0.5 text-[10px] leading-3">
+                            {kindLabel(entry.kind)}
+                          </span>
                         </span>
                       </button>
                     );

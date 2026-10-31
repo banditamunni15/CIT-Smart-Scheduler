@@ -23,7 +23,7 @@ export type ChangeCreateInput = {
   originalText?: string;
 };
 
-const isJsonRecord = (value: Prisma.InputJsonValue | Prisma.JsonValue): value is Prisma.JsonObject =>
+const isJsonRecord = (value: unknown): value is Prisma.JsonObject =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 export class ChangesRepository {

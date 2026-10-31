@@ -12,10 +12,10 @@
   },
   "soft_total": 3,
   "bookings": {
-    "booking_score": 64.5,
+    "booking_score": 67.0,
     "booking_score_max_if_all_approved": 70,
-    "approved": 21,
-    "alternatives": 2,
+    "approved": 22,
+    "alternatives": 1,
     "rejected": 2,
     "session_overrides": 0,
     "priority_inversions": []
