@@ -177,3 +177,13 @@ engine mode is `real`.
 
 Run `pnpm build` to type-check and `pnpm test` to run the API tests and
 type-check their sources.
+
+### Demo users
+
+Set `DEMO_USER_PASSWORD` to a password of at least 8 characters, then run
+`pnpm seed:demo-users`. The idempotent script creates or updates the five
+accounts shown on the client login page and assigns their demo roles. It also
+resets their passwords to the supplied value each time it runs. For local
+development, set the same value as `NEXT_PUBLIC_DEMO_PASSWORD` in the client
+environment to enable the login-page demo account shortcut. Do not use demo
+accounts or expose the demo password in a production deployment.

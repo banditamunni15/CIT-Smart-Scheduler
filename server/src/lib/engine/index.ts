@@ -37,6 +37,7 @@ const validationResultSchema = z.object({
 
 const timetableResultSchema = z.object({
   schedule: z.object({
+    dataset_id: z.string().optional(),
     sessions: z.array(
       z.object({
         session_id: z.string().min(1),
@@ -69,6 +70,7 @@ const bookingDecisionResultSchema = z.object({
 const bookingDraftCheckSchema = z.object({
   ok: z.boolean(),
   issues: z.array(jsonValueSchema),
+  suggestion: z.record(z.string(), jsonValueSchema).nullable().optional(),
 });
 
 const repairResultSchema = z.discriminatedUnion("status", [
@@ -107,6 +109,7 @@ export interface EngineClient {
   validateSchedule(
     dataset: Prisma.InputJsonObject,
     schedule: Prisma.InputJsonObject,
+    baseline?: Prisma.InputJsonObject,
   ): Promise<DatasetValidationResult>;
   generateTimetable(
     dataset: Prisma.InputJsonObject,
@@ -132,8 +135,80 @@ export interface EngineClient {
   ): Promise<RepairResult>;
 }
 
+const isJsonObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const buildValidationSchedule = (dataset: Prisma.InputJsonObject): Record<string, unknown> => {
+  const base = dataset.published_timetable;
+  if (!isJsonObject(base) || !Array.isArray(base.sessions)) {
+    throw new ValidationError("A published timetable is required when validating booking changes.", "ENGINE_INPUT_INVALID");
+  }
+  const bookingRequests = Array.isArray(dataset.booking_requests) ? dataset.booking_requests : [];
+  const decisions: unknown[] = Array.isArray(dataset.booking_decisions) ? [...dataset.booking_decisions] : [];
+  // Proposed manual/admin decisions replace any prior current decision for the same request.
+  for (const request of bookingRequests) {
+    if (!isJsonObject(request) || !isJsonObject(request.proposed_decision) || typeof request.id !== "string") continue;
+    const proposed = request.proposed_decision;
+    const existingIndex = decisions.findIndex((item) => isJsonObject(item) && item.request_id === request.id);
+    const decision = {
+      request_id: request.id,
+      status: proposed.status,
+      day: proposed.day ?? null,
+      start_period: proposed.start_period ?? null,
+      end_period: proposed.end_period ?? null,
+      room_id: proposed.room_id ?? null,
+      reason: proposed.reason ?? "",
+    };
+    if (existingIndex >= 0) decisions.splice(existingIndex, 1, decision);
+    else decisions.push(decision);
+  }
+  const rawOverrides = Array.isArray(dataset.session_overrides) ? dataset.session_overrides : [];
+  const sessionOverrides = rawOverrides.flatMap((item) => {
+    if (!isJsonObject(item) || typeof item.session_id !== "string" || typeof item.request_id !== "string") return [];
+    return [{
+      session_id: item.session_id,
+      day: item.to_day,
+      start_period: item.to_start,
+      room_id: item.to_room,
+      displaced_by: item.request_id,
+    }];
+  });
+  return {
+    ...base,
+    fest_week: { bookings: decisions, session_overrides: sessionOverrides },
+  };
+};
+
+const scheduleSessions = (
+  value: Prisma.JsonValue,
+  dataset?: Prisma.InputJsonObject,
+): Prisma.JsonValue[] => {
+  if (!isJsonObject(value) || !Array.isArray(value.sessions)) {
+    throw new ValidationError("The published timetable has no sessions array.", "ENGINE_INPUT_INVALID");
+  }
+  const overrides = dataset && Array.isArray(dataset.session_overrides)
+    ? dataset.session_overrides.filter(isJsonObject)
+    : [];
+  const bySession = new Map(
+    overrides
+      .filter((item) => typeof item.session_id === "string" && typeof item.to_day === "string" && typeof item.to_start === "number" && typeof item.to_room === "string")
+      .map((item) => [item.session_id as string, item] as const),
+  );
+  return (value.sessions as Prisma.JsonValue[]).map((entry) => {
+    if (!isJsonObject(entry)) return entry;
+    const override = bySession.get(String(entry.session_id));
+    return override
+      ? ({ ...entry, day: override.to_day as string, start_period: override.to_start as number, room_id: override.to_room as string } as Prisma.JsonValue)
+      : entry;
+  });
+};
+
 const parseResult = (value: unknown): ExamGenerationResult => {
-  const parsed = examResultSchema.safeParse(value);
+  const raw = value as Record<string, unknown>;
+  const report = typeof raw?.report === "object" && raw.report !== null
+    ? { ...(raw.report as Record<string, unknown>), soft_penalty: (raw.report as Record<string, unknown>).soft_penalty ?? (raw.report as Record<string, unknown>).exam_soft_penalty ?? 0 }
+    : raw?.report;
+  const parsed = examResultSchema.safeParse({ ...raw, report });
   if (!parsed.success) {
     throw new ValidationError(
       "The engine returned an invalid exam schedule.",
@@ -148,7 +223,13 @@ const parseResult = (value: unknown): ExamGenerationResult => {
 };
 
 const parseValidationResult = (value: unknown): DatasetValidationResult => {
-  const parsed = validationResultSchema.safeParse(value);
+  // The Python engine returns the validator report directly; older local fixtures
+  // may wrap it in { report }. Normalize both forms at this boundary.
+  const reportValue =
+    typeof value === "object" && value !== null && "report" in value
+      ? (value as { report: unknown }).report
+      : value;
+  const parsed = validationResultSchema.shape.report.safeParse(reportValue);
   if (!parsed.success) {
     throw new ValidationError(
       "The engine returned an invalid dataset validation report.",
@@ -159,34 +240,61 @@ const parseValidationResult = (value: unknown): DatasetValidationResult => {
       })),
     );
   }
-  return parsed.data;
+  return { report: parsed.data };
 };
 
 const parseTimetableResult = (value: unknown): TimetableGenerationResult => {
-  const parsed = timetableResultSchema.safeParse(value);
+  const raw = value as Record<string, unknown>;
+  const normalized = raw && Array.isArray(raw.sessions)
+    ? {
+        schedule: {
+          sessions: raw.sessions,
+          ...(typeof raw.dataset_id === "string"
+            ? { dataset_id: raw.dataset_id }
+            : typeof raw.report === "object" && raw.report !== null && typeof (raw.report as Record<string, unknown>).dataset_id === "string"
+              ? { dataset_id: (raw.report as Record<string, unknown>).dataset_id as string }
+              : {}),
+        },
+        report: raw.report,
+        soft_total: raw.soft_total ?? (typeof raw.report === "object" && raw.report !== null ? (raw.report as Record<string, unknown>).soft_total : undefined),
+        soft_breakdown: raw.soft_penalties ?? (typeof raw.report === "object" && raw.report !== null ? (raw.report as Record<string, unknown>).soft_penalties : undefined),
+        solver_meta: raw.solver ?? raw.solver_meta,
+      }
+    : raw;
+  const parsed = timetableResultSchema.safeParse(normalized);
   if (!parsed.success) {
     throw new ValidationError(
       "The engine returned an invalid timetable.",
       "ENGINE_OUTPUT_INVALID",
-      parsed.error.issues.map((issue) => ({
-        path: issue.path.join("."),
-        message: issue.message,
-      })),
+      parsed.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })),
     );
   }
   return parsed.data;
 };
 
 const parseBookingDecisionResult = (value: unknown): BookingDecisionResult => {
-  const parsed = bookingDecisionResultSchema.safeParse(value);
+  const raw = value as Record<string, unknown>;
+  const festWeek = raw && typeof raw.fest_week === "object" && raw.fest_week !== null
+    ? (raw.fest_week as Record<string, unknown>) : undefined;
+  const bookings = festWeek?.bookings;
+  const normalized = festWeek && Array.isArray(bookings)
+    ? {
+        decisions: bookings.map((item) => {
+          if (typeof item !== "object" || item === null) return item;
+          const decision = item as Record<string, unknown>;
+          const status = typeof decision.status === "string" ? decision.status.toUpperCase() : decision.status;
+          return { ...decision, status: status === "ALTERNATIVE_OFFERED" ? "ALTERNATIVE_OFFERED" : status };
+        }),
+        session_overrides: Array.isArray(festWeek.session_overrides) ? festWeek.session_overrides : [],
+        report: raw.report,
+      }
+    : raw;
+  const parsed = bookingDecisionResultSchema.safeParse(normalized);
   if (!parsed.success) {
     throw new ValidationError(
       "The engine returned an invalid booking decision response.",
       "ENGINE_OUTPUT_INVALID",
-      parsed.error.issues.map((issue) => ({
-        path: issue.path.join("."),
-        message: issue.message,
-      })),
+      parsed.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })),
     );
   }
   return parsed.data;
@@ -226,15 +334,17 @@ export class RealEngine implements EngineClient {
   async validate(
     dataset: Prisma.InputJsonObject,
   ): Promise<DatasetValidationResult> {
-    return parseValidationResult(await this.post("validate", { dataset }));
+    const schedule = buildValidationSchedule(dataset);
+    return parseValidationResult(await this.post("validate", { dataset, schedule }));
   }
 
   async validateSchedule(
     dataset: Prisma.InputJsonObject,
     schedule: Prisma.InputJsonObject,
+    baseline?: Prisma.InputJsonObject,
   ): Promise<DatasetValidationResult> {
     return parseValidationResult(
-      await this.post("validate", { dataset, schedule }),
+      await this.post("validate", { dataset, schedule, ...(baseline ? { baseline } : {}) }),
     );
   }
 
@@ -242,7 +352,7 @@ export class RealEngine implements EngineClient {
     dataset: Prisma.InputJsonObject,
   ): Promise<TimetableGenerationResult> {
     return parseTimetableResult(
-      await this.post("generate-timetable", { dataset }),
+      await this.post("timetable/generate", { dataset, time_limit_s: 20 }),
     );
   }
 
@@ -251,9 +361,11 @@ export class RealEngine implements EngineClient {
     publishedTimetable?: Prisma.JsonValue,
   ): Promise<ExamGenerationResult> {
     return parseResult(
-      await this.post("generate-exams", {
+      await this.post("exams/generate", {
         dataset,
-        published_timetable: publishedTimetable,
+        ...(isJsonObject(publishedTimetable) && Array.isArray(publishedTimetable.sessions)
+          ? { sessions: publishedTimetable.sessions }
+          : {}),
       }),
     );
   }
@@ -264,10 +376,13 @@ export class RealEngine implements EngineClient {
     draft: Prisma.InputJsonObject,
   ): Promise<BookingDraftCheckResult> {
     return parseBookingDraftCheck(
-      await this.post("check-booking-draft", {
+      await this.post("bookings/check-draft", {
         dataset,
-        published_timetable: publishedTimetable,
+        sessions: scheduleSessions(publishedTimetable, dataset),
         draft,
+        existing_bookings: isJsonObject(dataset) && Array.isArray(dataset.booking_decisions)
+          ? dataset.booking_decisions
+          : [],
       }),
     );
   }
@@ -277,9 +392,9 @@ export class RealEngine implements EngineClient {
     publishedTimetable: Prisma.JsonValue,
   ): Promise<BookingDecisionResult> {
     return parseBookingDecisionResult(
-      await this.post("decide-bookings", {
+      await this.post("bookings/decide", {
         dataset,
-        published_timetable: publishedTimetable,
+        sessions: scheduleSessions(publishedTimetable),
       }),
     );
   }
@@ -293,9 +408,9 @@ export class RealEngine implements EngineClient {
     return parseRepairResult(
       await this.post("repair", {
         dataset,
-        published_timetable: publishedTimetable,
+        baseline: publishedTimetable,
         disruption,
-        time_limit: timeLimit,
+        time_limit_s: timeLimit,
       }),
     );
   }
@@ -337,15 +452,21 @@ export class RealEngine implements EngineClient {
       );
     }
 
-    if (response.status >= 400 && response.status < 500) {
-      const details =
-        typeof payload === "object" && payload !== null && "details" in payload
-          ? payload.details
-          : payload;
+    if (response.status === 404 || response.status === 405 || response.status >= 500) {
+      throw new ServiceUnavailableError(
+        response.status >= 500
+          ? "The scheduling engine is unavailable."
+          : "The scheduling engine API contract is incompatible with this server.",
+        response.status >= 500 ? "ENGINE_UNAVAILABLE" : "ENGINE_API_MISMATCH",
+        payload,
+      );
+    }
+
+    if (response.status === 422 || response.status === 400) {
       throw new ValidationError(
-        "The scheduling engine rejected the request.",
-        "SCHEDULE_RULE_VIOLATION",
-        details,
+        "The scheduling engine rejected the request or could not satisfy its constraints.",
+        "ENGINE_REQUEST_REJECTED",
+        payload,
       );
     }
 

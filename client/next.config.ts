@@ -1,7 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  async rewrites() {
+    const apiTarget = process.env.API_PROXY_TARGET ?? "http://localhost:5000";
+    return [{ source: "/api/:path*", destination: `${apiTarget}/api/:path*` }];
+  },
   experimental: {
     agentFeedback: true,
   },

@@ -64,8 +64,23 @@ const toDatasetObject = (value: Prisma.JsonValue): Prisma.InputJsonObject => {
   return value;
 };
 
-const toCategory = (value: unknown): BookingCategory | undefined =>
-  Object.values(BookingCategory).find((category) => category === value);
+const toCategory = (value: unknown): BookingCategory | undefined => {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toUpperCase();
+  return Object.values(BookingCategory).find((category) => category === normalized);
+};
+
+const toEngineEnum = (value: string) => value.toLowerCase();
+
+const toEngineRole = (role: Role): string => {
+  switch (role) {
+    case Role.ADMIN: return "admin";
+    case Role.COORDINATOR: return "department_coordinator";
+    case Role.FACULTY: return "faculty";
+    case Role.CLUB: return "club";
+    default: throw new ValidationError("Unsupported user role for the booking engine.", "ROLE_INVALID");
+  }
+};
 
 const priorityOrderFor = (
   dataset: Prisma.JsonValue,
@@ -75,19 +90,15 @@ const priorityOrderFor = (
     if (!Array.isArray(value)) return undefined;
     const categories = value
       .map(toCategory)
-      .filter(
-        (category): category is BookingCategory => category !== undefined,
-      );
-    return categories.length === 4 && new Set(categories).size === 4
-      ? categories
-      : undefined;
+      .filter((category): category is BookingCategory => category !== undefined);
+    const unique = [...new Set(categories)];
+    return unique.length === 4 ? unique : undefined;
   };
-  const datasetOrder = normalize(
-    isRecord(dataset) ? dataset.priority_order : undefined,
-  );
-  if (datasetOrder) return datasetOrder;
+  // The application setting is the single source of truth when configured.
   const settingOrder = normalize(setting);
   if (settingOrder) return settingOrder;
+  const datasetOrder = normalize(isRecord(dataset) ? dataset.priority_order : undefined);
+  if (datasetOrder) return datasetOrder;
   const fallback = [
     BookingCategory.INSTITUTE_EVENT,
     BookingCategory.GUEST_LECTURE,
@@ -107,7 +118,8 @@ const roleCategoryCap = (
       "DATASET_INVALID",
     );
   }
-  const cap = toCategory(dataset.role_category_cap[role]);
+  const engineRole = toEngineRole(role);
+  const cap = toCategory(dataset.role_category_cap[engineRole] ?? dataset.role_category_cap[role]);
   if (!cap) {
     throw new ValidationError(
       `The dataset has no valid category cap for ${role}.`,
@@ -151,7 +163,10 @@ const groupAndRoomIdsForDepartment = (
   if (!isRecord(dataset))
     return { groups: new Set<string>(), rooms: new Set<string>() };
   const findIds = (field: string, idKeys: string[]) => {
-    const values = dataset[field];
+    const actualField = field === "groups" && Array.isArray(dataset.student_groups)
+      ? "student_groups"
+      : field;
+    const values = dataset[actualField];
     if (!Array.isArray(values)) return new Set<string>();
     return new Set(
       values.flatMap((item) => {
@@ -565,12 +580,6 @@ export class BookingsService {
     if (!decision || decision.request.datasetId !== dataset.id) {
       throw new NotFoundError("The booking decision was not found.");
     }
-    if (decision.approvalState !== ApprovalState.PENDING_ADMIN) {
-      throw new ConflictError(
-        "The decision is not pending Admin approval.",
-        "STALE_STATE",
-      );
-    }
     if (decision.request.requesterId === actor.id) {
       throw new ForbiddenError(
         "An Admin cannot approve their own booking request.",
@@ -580,6 +589,21 @@ export class BookingsService {
     if (decision.request.status === RequestStatus.CANCELLED) {
       throw new ConflictError(
         "A cancelled request cannot be approved.",
+        "STALE_STATE",
+      );
+    }
+    const requiresDepartmentApproval = this.isLabBooking(
+      { ...decision.request, requestedRoom: decision.roomId ?? decision.request.requestedRoom },
+      dataset.data,
+    );
+    const expectedApprovalState = requiresDepartmentApproval
+      ? ApprovalState.DEPT_APPROVED
+      : ApprovalState.PENDING_ADMIN;
+    if (decision.approvalState !== expectedApprovalState) {
+      throw new ConflictError(
+        requiresDepartmentApproval
+          ? "A lab booking requires department approval before Admin approval."
+          : "The decision is not pending Admin approval.",
         "STALE_STATE",
       );
     }
@@ -613,7 +637,11 @@ export class BookingsService {
         "STALE_STATE",
       );
     }
-    return this.repository.approveDecision(id, this.actor(actor));
+    return this.repository.approveDecision(
+      id,
+      this.actor(actor),
+      expectedApprovalState,
+    );
   }
 
   rejectDecision(id: string, actor: RequestUser, reason: string) {
@@ -713,7 +741,7 @@ export class BookingsService {
         result.report,
       );
     }
-    const normalized = this.normalizeEngineDecisions(result);
+    const normalized = this.normalizeEngineDecisions(result, timetable.schedule);
     const expected = new Set(
       targetRequests
         .filter((request) => request.status !== RequestStatus.CANCELLED)
@@ -747,6 +775,7 @@ export class BookingsService {
 
   private normalizeEngineDecisions(
     result: Awaited<ReturnType<EngineClient["decideBookings"]>>,
+    baselineSchedule: Prisma.JsonValue,
   ) {
     const overridesByRequest = new Map<
       string,
@@ -760,34 +789,39 @@ export class BookingsService {
         to_room: string;
       }>
     >();
+    const baselineEntries =
+      isRecord(baselineSchedule) && Array.isArray(baselineSchedule.sessions)
+        ? baselineSchedule.sessions.filter(isRecord)
+        : [];
     for (const move of result.session_overrides) {
+      // Python's wire contract identifies the booking via displaced_by and only
+      // returns the destination. Derive the origin from the submitted baseline.
       const requestId = this.requiredString(
-        move.request_id,
-        "session_overrides.request_id",
+        move.request_id ?? move.displaced_by,
+        "session_overrides.displaced_by",
       );
+      const sessionId = this.requiredString(
+        move.session_id,
+        "session_overrides.session_id",
+      );
+      const from = baselineEntries.find(
+        (entry) => entry.session_id === sessionId,
+      );
+      if (!from) {
+        throw new ValidationError(
+          "The booking engine moved a session that is absent from the baseline timetable.",
+          "ENGINE_OUTPUT_INVALID",
+          { session_id: sessionId },
+        );
+      }
       const normalized = {
-        session_id: this.requiredString(
-          move.session_id,
-          "session_overrides.session_id",
-        ),
-        from_day: this.requiredString(
-          move.from_day,
-          "session_overrides.from_day",
-        ),
-        from_start: this.requiredNumber(
-          move.from_start,
-          "session_overrides.from_start",
-        ),
-        from_room: this.requiredString(
-          move.from_room,
-          "session_overrides.from_room",
-        ),
-        to_day: this.requiredString(move.to_day, "session_overrides.to_day"),
-        to_start: this.requiredNumber(
-          move.to_start,
-          "session_overrides.to_start",
-        ),
-        to_room: this.requiredString(move.to_room, "session_overrides.to_room"),
+        session_id: sessionId,
+        from_day: this.requiredString(from.day, "baseline.day"),
+        from_start: this.requiredNumber(from.start_period, "baseline.start_period"),
+        from_room: this.requiredString(from.room_id, "baseline.room_id"),
+        to_day: this.requiredString(move.to_day ?? move.day, "session_overrides.day"),
+        to_start: this.requiredNumber(move.to_start ?? move.start_period, "session_overrides.start_period"),
+        to_room: this.requiredString(move.to_room ?? move.room_id, "session_overrides.room_id"),
       };
       overridesByRequest.set(requestId, [
         ...(overridesByRequest.get(requestId) ?? []),
@@ -842,6 +876,7 @@ export class BookingsService {
       requesterId: string | null;
       requesterName: string;
       requesterRole: Role;
+      submittedAt: Date;
       requestedCategory: BookingCategory;
       effectiveCategory: BookingCategory;
       title: string;
@@ -865,6 +900,7 @@ export class BookingsService {
     },
     sessionOverrides: Array<{
       sessionId: string;
+      decision?: { requestId: string };
       fromDay: string;
       fromStart: number;
       fromRoom: string;
@@ -886,16 +922,18 @@ export class BookingsService {
     const base = toDatasetObject(data);
     return {
       ...base,
-      priority_order: priorityOrderFor(data, priority),
+      priority_order: priorityOrderFor(data, priority).map(toEngineEnum),
       booking_requests: requests.map((request) => ({
         request_id: request.id,
         id: request.id,
         external_id: request.externalId,
         requester_id: request.requesterId,
         requester_name: request.requesterName,
-        requester_role: request.requesterRole,
-        requested_category: request.requestedCategory,
-        effective_category: request.effectiveCategory,
+        role: toEngineRole(request.requesterRole),
+        requester_role: toEngineRole(request.requesterRole),
+        submitted_at: request.submittedAt.toISOString(),
+        requested_category: toEngineEnum(request.requestedCategory),
+        effective_category: toEngineEnum(request.effectiveCategory),
         title: request.title,
         attendance: request.attendance,
         duration_periods: request.durationPeriods,
@@ -906,13 +944,13 @@ export class BookingsService {
         mandatory_for_groups: request.mandatoryForGroups,
         series_id: request.seriesId,
         raw_text: request.rawText,
-        status: request.status,
+        status: toEngineEnum(request.status),
         cancelled_at: request.cancelledAt?.toISOString() ?? null,
         cancel_note: request.cancelNote,
         ...(replacement?.requestId === request.id
           ? {
               proposed_decision: {
-                status: replacement.decision.status,
+                status: toEngineEnum(replacement.decision.status),
                 day: replacement.decision.day ?? null,
                 start_period: replacement.decision.startPeriod ?? null,
                 end_period: replacement.decision.endPeriod ?? null,
@@ -926,8 +964,8 @@ export class BookingsService {
       booking_decisions: currentDecisions.map((decision) => ({
         request_id: decision.requestId,
         external_id: decision.request.externalId,
-        request_status: decision.request.status,
-        status: decision.status,
+        request_status: toEngineEnum(decision.request.status),
+        status: toEngineEnum(decision.status),
         day: decision.day,
         start_period: decision.startPeriod,
         end_period: decision.endPeriod,
@@ -935,6 +973,7 @@ export class BookingsService {
         reason: decision.reason,
       })),
       session_overrides: sessionOverrides.map((override) => ({
+        request_id: override.decision?.requestId ?? null,
         session_id: override.sessionId,
         from_day: override.fromDay,
         from_start: override.fromStart,
@@ -951,9 +990,10 @@ export class BookingsService {
       request_id: input.externalId ?? null,
       requester_id: input.requesterId,
       requester_name: input.requesterName,
-      requester_role: input.requesterRole,
-      requested_category: input.requestedCategory,
-      effective_category: input.effectiveCategory,
+      role: toEngineRole(input.requesterRole),
+      requester_role: toEngineRole(input.requesterRole),
+      requested_category: toEngineEnum(input.requestedCategory),
+      effective_category: toEngineEnum(input.effectiveCategory),
       title: input.title,
       attendance: input.attendance,
       duration_periods: input.durationPeriods,
@@ -979,8 +1019,12 @@ export class BookingsService {
           : []),
         {
           ...this.bookingDraftForEngine(input),
+          id: "__manual_draft__",
+          request_id: "__manual_draft__",
+          submitted_at: new Date().toISOString(),
+          status: "submitted",
           proposed_decision: {
-            status: DecisionStatus.APPROVED,
+            status: toEngineEnum(DecisionStatus.APPROVED),
             day: body.day,
             start_period: body.startPeriod,
             end_period: body.endPeriod,

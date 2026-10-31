@@ -1,7 +1,9 @@
 import {
+  ApprovalState,
   JobKind,
   Prisma,
   PublishStatus,
+  RequestStatus,
   type PrismaClient,
   type Role,
   type Timetable,
@@ -90,6 +92,32 @@ export class TimetablesRepository {
         dataset: { select: { data: true } },
       },
     });
+  }
+
+
+  async findApprovedRoomCommitments(datasetId: string) {
+    const decisions = await this.client.bookingDecision.findMany({
+      where: {
+        isCurrent: true,
+        approvalState: { in: [ApprovalState.NOT_REQUIRED, ApprovalState.APPROVED] },
+        request: { datasetId, status: RequestStatus.APPROVED },
+      },
+      select: { day: true, startPeriod: true, endPeriod: true, roomId: true },
+    });
+    const overrides = await this.client.sessionOverride.findMany({
+      where: {
+        decision: {
+          isCurrent: true,
+          approvalState: ApprovalState.APPROVED,
+          request: { datasetId, status: RequestStatus.APPROVED },
+        },
+      },
+      select: {
+        sessionId: true, fromDay: true, fromStart: true, fromRoom: true,
+        toDay: true, toStart: true, toRoom: true,
+      },
+    });
+    return { decisions, overrides };
   }
 
   async findPublishedForActiveDataset() {
@@ -246,6 +274,15 @@ export class TimetablesRepository {
           throw new ConflictError(
             "Only a draft timetable can be published.",
             "STALE_STATE",
+          );
+        }
+        const activeDataset = await tx.dataset.findFirst({
+          where: { isActive: true }, select: { id: true },
+        });
+        if (activeDataset?.id !== draft.datasetId) {
+          throw new ConflictError(
+            "Only a timetable generated from the active dataset can be published.",
+            "STALE_DATASET",
           );
         }
         if (

@@ -7,8 +7,8 @@ import {
   Prisma,
   PublishStatus,
   RequestStatus,
+  Role,
   type PrismaClient,
-  type Role,
 } from "@prisma/client";
 import { audit } from "../../audit/audit.service.js";
 import { prisma } from "../../lib/prisma.js";
@@ -182,6 +182,7 @@ export class BookingsRepository {
       },
       select: {
         sessionId: true,
+        decision: { select: { requestId: true } },
         fromDay: true,
         fromStart: true,
         fromRoom: true,
@@ -339,11 +340,20 @@ export class BookingsRepository {
     return this.client.$transaction(async (tx) => {
       const current = await tx.bookingRequest.findUnique({
         where: { id },
-        select: { requesterId: true, status: true },
+        select: {
+          requesterId: true,
+          status: true,
+          requester: { select: { department: true } },
+        },
       });
       if (!current)
         throw new NotFoundError("The booking request was not found.");
-      if (actor.role !== "ADMIN" && current.requesterId !== actor.id) {
+      const isOwner = current.requesterId === actor.id;
+      const isDepartmentCoordinator =
+        actor.role === Role.COORDINATOR &&
+        !!actor.department &&
+        current.requester?.department === actor.department;
+      if (actor.role !== Role.ADMIN && !isOwner && !isDepartmentCoordinator) {
         throw new NotFoundError("The booking request was not found.");
       }
       if (current.status === RequestStatus.CANCELLED) {
@@ -620,7 +630,11 @@ export class BookingsRepository {
     });
   }
 
-  async approveDecision(id: string, actor: BookingActor) {
+  async approveDecision(
+    id: string,
+    actor: BookingActor,
+    expectedState: ApprovalState = ApprovalState.PENDING_ADMIN,
+  ) {
     return this.client.$transaction(async (tx) => {
       const decision = await tx.bookingDecision.findUnique({
         where: { id },
@@ -633,9 +647,9 @@ export class BookingsRepository {
       });
       if (!decision)
         throw new NotFoundError("The booking decision was not found.");
-      if (decision.approvalState !== ApprovalState.PENDING_ADMIN) {
+      if (decision.approvalState !== expectedState) {
         throw new ConflictError(
-          "The booking decision is not pending Admin approval.",
+          "The booking decision is not in the expected approval state.",
           "STALE_STATE",
         );
       }
@@ -658,7 +672,7 @@ export class BookingsRepository {
         where: {
           id,
           isCurrent: true,
-          approvalState: ApprovalState.PENDING_ADMIN,
+          approvalState: expectedState,
         },
         data: {
           approvalState: ApprovalState.APPROVED,
@@ -698,9 +712,9 @@ export class BookingsRepository {
       });
       if (!decision)
         throw new NotFoundError("The booking decision was not found.");
-      if (decision.approvalState !== ApprovalState.PENDING_ADMIN) {
+      if (![ApprovalState.PENDING_ADMIN, ApprovalState.DEPT_APPROVED].includes(decision.approvalState)) {
         throw new ConflictError(
-          "The booking decision is not pending Admin approval.",
+          "The booking decision is not awaiting approval.",
           "STALE_STATE",
         );
       }
@@ -723,7 +737,7 @@ export class BookingsRepository {
         where: {
           id,
           isCurrent: true,
-          approvalState: ApprovalState.PENDING_ADMIN,
+          approvalState: { in: [ApprovalState.PENDING_ADMIN, ApprovalState.DEPT_APPROVED] },
         },
         data: {
           approvalState: ApprovalState.REJECTED,
@@ -758,14 +772,12 @@ export class BookingsRepository {
         where: { id },
         select: {
           id: true,
-          requestId: true,
           approvalState: true,
           isCurrent: true,
           request: { select: { requesterId: true, status: true } },
         },
       });
-      if (!decision)
-        throw new NotFoundError("The booking decision was not found.");
+      if (!decision) throw new NotFoundError("The booking decision was not found.");
       if (
         !decision.isCurrent ||
         decision.approvalState !== ApprovalState.PENDING_ADMIN ||
@@ -782,6 +794,17 @@ export class BookingsRepository {
           "SELF_APPROVAL_NOT_ALLOWED",
         );
       }
+      const changed = await tx.bookingDecision.updateMany({
+        where: { id, isCurrent: true, approvalState: ApprovalState.PENDING_ADMIN },
+        data: {
+          approvalState: ApprovalState.DEPT_APPROVED,
+          deptApprovedById: actor.id,
+          deptApprovedAt: new Date(),
+        },
+      });
+      if (changed.count !== 1) {
+        throw new ConflictError("The booking decision changed.", "STALE_STATE");
+      }
       await audit(tx, {
         actorId: actor.id,
         actorRole: actor.role,
@@ -790,7 +813,7 @@ export class BookingsRepository {
         entityId: id,
         summary: "A coordinator approved a lab booking for their department.",
       });
-      return { id, approvalState: ApprovalState.PENDING_ADMIN };
+      return { id, approvalState: ApprovalState.DEPT_APPROVED };
     });
   }
 

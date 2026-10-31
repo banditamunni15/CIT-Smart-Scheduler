@@ -1,5 +1,6 @@
 import {
   DatasetSource,
+  JobState,
   Prisma,
   PublishStatus,
   type PrismaClient,
@@ -187,6 +188,13 @@ export class DatasetsRepository {
           data: { isActive: true },
         });
 
+        const runningJobs = await tx.job.count({ where: { state: JobState.RUNNING } });
+        if (runningJobs > 0) {
+          throw new ConflictError(
+            "Demo reset is blocked while background jobs are running. Wait for them to finish and retry.",
+            "JOBS_RUNNING",
+          );
+        }
         const [timetables, examSchedules, jobs] = await Promise.all([
           tx.timetable.updateMany({
             where: { status: { not: PublishStatus.ARCHIVED } },
@@ -196,7 +204,15 @@ export class DatasetsRepository {
             where: { status: { not: PublishStatus.ARCHIVED } },
             data: { status: PublishStatus.ARCHIVED },
           }),
-          tx.job.deleteMany(),
+          tx.job.updateMany({
+            where: { state: JobState.QUEUED },
+            data: {
+              state: JobState.FAILED,
+              progress: 0,
+              error: "Stopped because the demo dataset was reset.",
+              finishedAt: new Date(),
+            },
+          }),
         ]);
 
         await audit(tx, {

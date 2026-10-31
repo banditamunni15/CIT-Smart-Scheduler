@@ -66,6 +66,10 @@ export class JobService {
       claimedJob = activeJob;
 
       const outcome = await handler(activeJob);
+      await this.client.job.updateMany({
+        where: { id: activeJob.id, state: JobState.RUNNING },
+        data: { progress: 90, message: "Saving result..." },
+      });
       await this.client.$transaction(async (tx) => {
         const resultId = await outcome.persist(tx, activeJob);
         await tx.job.update({
@@ -100,6 +104,8 @@ export class JobService {
             where: { id: failedJob.id, state: JobState.RUNNING },
             data: {
               state: JobState.FAILED,
+              progress: 0,
+              message: "Failed.",
               error:
                 error instanceof Error
                   ? error.message
@@ -123,18 +129,48 @@ export class JobService {
   }
 
   async resumeQueued(kind: JobKind, handler: JobHandler): Promise<void> {
+    // Recover jobs abandoned by a crashed worker. The lease is deliberately
+    // conservative so a long-running live worker is not reclaimed too early.
+    const staleBefore = new Date(Date.now() - 15 * 60 * 1000);
+    await this.client.job.updateMany({
+      where: {
+        kind,
+        state: JobState.RUNNING,
+        startedAt: { lt: staleBefore },
+      },
+      data: {
+        state: JobState.QUEUED,
+        progress: 0,
+        message: "Recovered after worker restart.",
+        startedAt: null,
+      },
+    });
     const queuedJobs = await this.client.job.findMany({
       where: { kind, state: JobState.QUEUED },
+      orderBy: { createdAt: "asc" },
       select: { id: true },
     });
-    await Promise.all(queuedJobs.map(({ id }) => this.process(id, handler)));
+    // Bound parallel solver calls to avoid saturating the Python service/DB.
+    const concurrency = 2;
+    for (let index = 0; index < queuedJobs.length; index += concurrency) {
+      await Promise.all(
+        queuedJobs
+          .slice(index, index + concurrency)
+          .map(({ id }) => this.process(id, handler)),
+      );
+    }
   }
 
   private async claim(jobId: string): Promise<JobRecord | null> {
     return this.client.$transaction(async (tx) => {
       const claimed = await tx.job.updateMany({
         where: { id: jobId, state: JobState.QUEUED },
-        data: { state: JobState.RUNNING, startedAt: new Date() },
+        data: {
+          state: JobState.RUNNING,
+          progress: 5,
+          message: "Processing...",
+          startedAt: new Date(),
+        },
       });
       if (claimed.count !== 1) return null;
 
