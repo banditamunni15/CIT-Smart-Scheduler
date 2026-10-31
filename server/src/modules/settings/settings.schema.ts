@@ -1,12 +1,13 @@
+import { BookingCategory } from "@prisma/client";
 import { z } from "zod";
 
 export const priorityOrderBodySchema = z
   .object({
     priority_order: z
-      .array(z.string().trim().min(1))
-      .min(1)
-      .refine((values) => new Set(values).size === values.length, {
-        message: "Priority values must be unique.",
+      .array(z.nativeEnum(BookingCategory))
+      .length(4)
+      .refine((values) => new Set(values).size === 4, {
+        message: "Priority order must contain each booking category exactly once.",
       }),
   })
   .strict();

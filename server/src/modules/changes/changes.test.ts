@@ -436,6 +436,7 @@ describe("changes service", () => {
     expect(engine.validateSchedule).toHaveBeenCalledWith(
       appliedDataset,
       schedule,
+      schedule,
     );
     expect(repository.approve).toHaveBeenCalledWith(
       "change-1",

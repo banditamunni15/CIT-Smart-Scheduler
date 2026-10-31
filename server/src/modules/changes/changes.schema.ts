@@ -99,7 +99,7 @@ export const facultyUnavailabilityBodySchema = z
     periods: z.array(period).optional(),
     reason,
   })
-  .passthrough();
+  .strict();
 
 export const changeRequestBodySchema = z
   .object({
@@ -109,7 +109,7 @@ export const changeRequestBodySchema = z
     preferredDay: day.optional(),
     preferredPeriod: period.optional(),
   })
-  .passthrough();
+  .strict();
 
 export const uploadChangeBodySchema = disruptionSchema;
 

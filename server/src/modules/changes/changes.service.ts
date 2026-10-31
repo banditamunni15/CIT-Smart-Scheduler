@@ -340,23 +340,76 @@ export class ChangesService {
       throw new NotFoundError("The session is not on the published timetable.");
     }
 
-    const change =
+    if (body.requestedChange === "move" && Object.keys(body.details).length > 0) {
+      throw new ValidationError(
+        "Move requests must use preferredDay and preferredPeriod; arbitrary session details are not accepted.",
+        "CHANGE_FIELDS_NOT_ALLOWED",
+      );
+    }
+    const allowedExtraFields = ["day", "start_period", "duration_periods", "duration"];
+    const unexpectedFields = Object.keys(body.details).filter((key) => !allowedExtraFields.includes(key));
+    if (body.requestedChange === "extra" && unexpectedFields.length) {
+      throw new ValidationError(
+        "Extra-session details contain fields that cannot be changed by a request.",
+        "CHANGE_FIELDS_NOT_ALLOWED",
+        { fields: unexpectedFields },
+      );
+    }
+    if ((body.preferredDay === undefined) !== (body.preferredPeriod === undefined)) {
+      throw new ValidationError(
+        "preferredDay and preferredPeriod must be supplied together.",
+        "CHANGE_DETAILS_INVALID",
+      );
+    }
+    if (body.requestedChange === "extra" &&
+        ((body.details.day === undefined) !== (body.details.start_period === undefined))) {
+      throw new ValidationError(
+        "An extra session's day and start_period must be supplied together.",
+        "CHANGE_DETAILS_INVALID",
+      );
+    }
+    const calendarDays = isRecord(dataset.data) && isRecord(dataset.data.calendar) && Array.isArray(dataset.data.calendar.days)
+      ? dataset.data.calendar.days
+      : [];
+    const requestedDay = body.requestedChange === "extra" ? body.details.day : body.preferredDay;
+    const requestedPeriod = body.requestedChange === "extra" ? body.details.start_period : body.preferredPeriod;
+    if (requestedDay !== undefined && (typeof requestedDay !== "string" || !calendarDays.includes(requestedDay))) {
+      throw new ValidationError("The requested day is not in the dataset calendar.", "CHANGE_DETAILS_INVALID");
+    }
+    if (requestedPeriod !== undefined && (typeof requestedPeriod !== "number" || !Number.isInteger(requestedPeriod) || requestedPeriod < 1 || requestedPeriod > 9)) {
+      throw new ValidationError("The requested start period must be between 1 and 9.", "CHANGE_DETAILS_INVALID");
+    }
+    const requestedDuration = body.details.duration ?? body.details.duration_periods;
+    if (body.requestedChange === "extra" && requestedDuration !== undefined &&
+        (typeof requestedDuration !== "number" || !Number.isInteger(requestedDuration) || requestedDuration < 1)) {
+      throw new ValidationError("The extra session duration must be a positive whole number of periods.", "CHANGE_DETAILS_INVALID");
+    }
+    const extraSessionId = `extra-${randomUUID()}`;
+    const changes =
       body.requestedChange === "extra"
-        ? {
+        ? [{
             type: "add_session" as const,
             session: {
               ...session,
-              ...body.details,
-              session_id:
-                fieldString(body.details as JsonRecord, ["session_id", "id"]) ??
-                `extra-${randomUUID()}`,
+              ...(typeof body.details.duration === "number"
+                ? { duration: body.details.duration }
+                : typeof body.details.duration_periods === "number"
+                  ? { duration: body.details.duration_periods }
+                  : {}),
+              ...(typeof body.details.day === "string" && typeof body.details.start_period === "number"
+                ? { fixed_slot: { day: body.details.day, start_period: body.details.start_period } }
+                : {}),
+              // Identity, faculty, groups and course are inherited from the
+              // authorized source session and cannot be supplied by the client.
+              id: extraSessionId,
+              session_id: extraSessionId,
               requested_from_session_id: body.sessionId,
               requested_change: "extra",
             },
-          }
+          }]
         : this.moveRequestDisruption(actor, session, current, body);
     const disruption = {
-      changes: [change],
+      changes,
       request_metadata: {
         session_id: body.sessionId,
         requested_change: body.requestedChange,
@@ -388,7 +441,11 @@ export class ChangesService {
     const change = await this.repository.findById(id);
     if (
       !change ||
-      (actor.role !== Role.ADMIN && change.requestedById !== actor.id)
+      (actor.role !== Role.ADMIN &&
+        change.requestedById !== actor.id &&
+        !(actor.role === Role.COORDINATOR &&
+          actor.department &&
+          change.requestedBy?.department === actor.department))
     ) {
       throw new NotFoundError("The change proposal was not found.");
     }
@@ -424,6 +481,7 @@ export class ChangesService {
     const validation = await this.engine.validateSchedule(
       appliedData,
       schedule,
+      asInputObject(context.timetable.schedule, "baseline timetable"),
     );
     if (validation.report.hard_violation_count > 0) {
       throw new ValidationError(
@@ -681,7 +739,7 @@ export class ChangesService {
     session: JsonRecord,
     placement: JsonRecord,
     body: ChangeRequestBody,
-  ) {
+  ): Disruption["changes"] {
     const facultyId = actor.facultyId ?? sessionFacultyIds(session)[0] ?? "";
     if (!facultyId) {
       throw new ValidationError(
@@ -689,28 +747,43 @@ export class ChangesService {
         "DATASET_INVALID",
       );
     }
-    const day = fieldString(placement, ["day"]) ?? body.preferredDay;
+
+    if (body.preferredDay && body.preferredPeriod) {
+      if (placement.day === body.preferredDay && placement.start_period === body.preferredPeriod) {
+        throw new ValidationError(
+          "The requested placement is already the session's current placement.",
+          "CHANGE_DETAILS_INVALID",
+        );
+      }
+      const id = sessionId(session);
+      if (!id) throw new ValidationError("The session has no stable identifier.", "DATASET_INVALID");
+      // The official disruption contract has no move_session primitive. A
+      // remove + re-add with fixed_slot expresses a targeted move without
+      // blocking every other class taught by the same faculty member.
+      return [
+        { type: "remove_session", session_id: id },
+        {
+          type: "add_session",
+          session: {
+            ...session,
+            fixed_slot: { day: body.preferredDay, start_period: body.preferredPeriod },
+          } as Prisma.InputJsonObject,
+        },
+      ];
+    }
+
+    const day = fieldString(placement, ["day"]) ?? "MON";
     const start = placement.start_period;
-    const periods =
-      typeof start === "number"
-        ? [start]
-        : body.preferredPeriod
-          ? [body.preferredPeriod]
-          : undefined;
-    return {
-      type: "faculty_unavailable" as const,
-      faculty_id: facultyId,
-      days: [day ?? body.preferredDay ?? "MON"],
-      ...(periods ? { periods } : {}),
-      reason: "Requested session move.",
-      session_id: body.sessionId,
-      requested_change: "move",
-      details: body.details,
-      ...(body.preferredDay ? { preferred_day: body.preferredDay } : {}),
-      ...(body.preferredPeriod
-        ? { preferred_period: body.preferredPeriod }
-        : {}),
-    };
+    const periods = typeof start === "number" ? [start] : undefined;
+    return [
+      {
+        type: "faculty_unavailable",
+        faculty_id: facultyId,
+        days: [day],
+        ...(periods ? { periods } : {}),
+        reason: "Requested session move.",
+      },
+    ];
   }
 
   private actor(user: RequestUser): ChangeActor {

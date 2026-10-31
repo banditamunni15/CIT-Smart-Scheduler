@@ -8,6 +8,7 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "generate": "prisma generate",
+    "seed:demo-users": "tsx scripts/seed-demo-users.ts",
     "test": "vitest run src && tsc --noEmit -p tsconfig.test.json",
     "postinstall": "prisma skills sync || exit 0"
   },

@@ -14,10 +14,18 @@ import timetablesRouter from "./modules/timetables/timetables.routes.js";
 import publicTimetablesRouter from "./modules/timetables/timetables.public.routes.js";
 import bookingsRouter from "./modules/bookings/bookings.routes.js";
 import changesRouter from "./modules/changes/changes.routes.js";
+import { env } from "./config/env.js";
 
 const app: Express = express();
 
-app.use(cors());
+app.use(
+  cors({
+    origin: env.CLIENT_ORIGIN,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    credentials: true,
+    allowedHeaders: ["Content-Type", "Authorization"],
+  }),
+);
 app.options(/.*/, cors());
 app.all("/api/auth/*splat", toNodeHandler(auth));
 

@@ -150,7 +150,7 @@ const makeRepository = (
     rejectDecision: vi.fn(async () => ({ id: "decision-1" })),
     auditDepartmentApproval: vi.fn(async () => ({
       id: "decision-1",
-      approvalState: ApprovalState.PENDING_ADMIN,
+      approvalState: ApprovalState.DEPT_APPROVED,
     })),
     ...overrides,
   }) as unknown as RepositoryPort;

@@ -29,6 +29,16 @@ const activeSummary = {
   createdAt: new Date("2026-10-31T00:00:00.000Z"),
 };
 
+const validDataset = {
+  dataset_id: "cit-upload",
+  calendar: { days: ["MON"], lunch: { after_period: 4 }, lab_start_periods: [1] },
+  rooms: [{ id: "R1" }], room_unavailability: [], faculty: [{ id: "F1" }],
+  student_groups: [{ id: "G1" }, { id: "G2" }], courses: [{ id: "C1" }],
+  sessions: [{ id: "S1" }], booking_requests: [], cancellations: [], exams: [],
+  priority_order: ["institute_event", "guest_lecture", "department_event", "club_event"],
+  role_category_cap: { admin: "institute_event", faculty: "guest_lecture", department_coordinator: "department_event", club: "club_event" },
+};
+
 type TestDatasetsService = Pick<
   DatasetsService,
   "list" | "getActiveSummary" | "upload" | "activate" | "resetDemo"
@@ -206,11 +216,7 @@ describe("dataset upload validation", () => {
       { id: "admin-1", role: Role.ADMIN },
       {
         label: "CIT upload",
-        data: {
-          dataset_id: "cit-upload",
-          groups: [{ id: "G1" }, { id: "G2" }],
-          rooms: [{ id: "R1" }],
-        },
+        data: validDataset,
       },
     );
 
@@ -218,61 +224,32 @@ describe("dataset upload validation", () => {
       { id: "admin-1", role: Role.ADMIN },
       {
         label: "CIT upload",
-        data: {
-          dataset_id: "cit-upload",
-          groups: [{ id: "G1" }, { id: "G2" }],
-          rooms: [{ id: "R1" }],
-        },
+        data: validDataset,
       },
       {
-        counts: { groups: 2, rooms: 1 },
+        counts: { rooms: 1, room_unavailability: 0, faculty: 1, student_groups: 2, courses: 1, sessions: 1, booking_requests: 0, cancellations: 0, exams: 0, priority_order: 4 },
         warnings: [],
       },
     );
   });
 
-  it("does not save a dataset rejected by the official validator", async () => {
+  it("rejects datasets that do not satisfy the engine dataset envelope", async () => {
     const repository: Pick<
       DatasetsRepository,
       "list" | "findActiveSummary" | "upload" | "activate" | "resetDemo"
     > = {
       list: vi.fn(async () => ({ items: [], total: 0, page: 1, limit: 20 })),
       findActiveSummary: vi.fn(async () => activeSummary),
-      upload: vi.fn(async () => {
-        throw new Error("upload must not be called");
-      }),
+      upload: vi.fn(async () => { throw new Error("upload must not be called"); }),
       activate: vi.fn(async () => ({ ...activeSummary, isActive: true })),
-      resetDemo: vi.fn(async () => ({
-        dataset: {
-          id: activeSummary.id,
-          datasetKey: activeSummary.datasetKey,
-          version: 1,
-        },
-        archivedTimetables: 0,
-        archivedExamSchedules: 0,
-        clearedJobs: 0,
-      })),
+      resetDemo: vi.fn(async () => ({ dataset: { id: activeSummary.id, datasetKey: activeSummary.datasetKey, version: 1 }, archivedTimetables: 0, archivedExamSchedules: 0, clearedJobs: 0 })),
     };
-    const engine: Pick<EngineClient, "validate"> = {
-      validate: vi.fn(async () => ({
-        report: {
-          hard_violation_count: 2,
-          violations: ["invalid room reference"],
-        },
-      })),
-    };
-    const service = new DatasetsService(repository, engine);
-
-    await expect(
-      service.upload(
-        { id: "admin-1", role: Role.ADMIN },
-        {
-          label: "Invalid",
-          data: { dataset_id: "invalid", rooms: [] },
-        },
-      ),
-    ).rejects.toMatchObject({ code: "SCHEDULE_RULE_VIOLATION" });
-    expect(engine.validate).toHaveBeenCalledOnce();
+    const service = new DatasetsService(repository);
+    await expect(service.upload(
+      { id: "admin-1", role: Role.ADMIN },
+      { label: "Invalid", data: { dataset_id: "invalid", rooms: [] } },
+    )).rejects.toMatchObject({ code: "DATASET_INVALID" });
     expect(repository.upload).not.toHaveBeenCalled();
   });
+
 });

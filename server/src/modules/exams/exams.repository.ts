@@ -99,7 +99,7 @@ export class ExamsRepository {
 
   async findPublished() {
     return this.client.examSchedule.findFirst({
-      where: { status: PublishStatus.PUBLISHED },
+      where: { status: PublishStatus.PUBLISHED, dataset: { isActive: true } },
       orderBy: { publishedAt: "desc" },
       select: {
         id: true,
@@ -160,6 +160,7 @@ export class ExamsRepository {
             status: true,
             hardViolationCount: true,
             report: true,
+            datasetId: true,
           },
         });
 
@@ -172,6 +173,15 @@ export class ExamsRepository {
             "STALE_STATE",
           );
         }
+        const activeDataset = await tx.dataset.findFirst({
+          where: { isActive: true }, select: { id: true },
+        });
+        if (activeDataset?.id !== draft.datasetId) {
+          throw new ConflictError(
+            "Only an exam schedule generated from the active dataset can be published.",
+            "STALE_DATASET",
+          );
+        }
         if (draft.hardViolationCount !== 0) {
           throw new ValidationError(
             "An exam schedule with hard violations cannot be published.",
@@ -181,11 +191,11 @@ export class ExamsRepository {
         }
 
         const previouslyPublished = await tx.examSchedule.findMany({
-          where: { status: PublishStatus.PUBLISHED },
+          where: { datasetId: draft.datasetId, status: PublishStatus.PUBLISHED },
           select: { id: true },
         });
         await tx.examSchedule.updateMany({
-          where: { status: PublishStatus.PUBLISHED },
+          where: { datasetId: draft.datasetId, status: PublishStatus.PUBLISHED },
           data: { status: PublishStatus.ARCHIVED },
         });
         for (const archived of previouslyPublished) {

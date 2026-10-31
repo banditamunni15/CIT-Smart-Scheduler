@@ -23,6 +23,9 @@ export type ChangeCreateInput = {
   originalText?: string;
 };
 
+const isJsonRecord = (value: Prisma.InputJsonValue | Prisma.JsonValue): value is Prisma.JsonObject =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
 export class ChangesRepository {
   constructor(private readonly client: PrismaClient = prisma) {}
 
@@ -69,7 +72,11 @@ export class ChangesRepository {
   list(actor: ChangeActor, statuses?: ChangeStatus[]) {
     return this.client.changeProposal.findMany({
       where: {
-        ...(actor.role === Role.ADMIN ? {} : { requestedById: actor.id }),
+        ...(actor.role === Role.ADMIN
+          ? {}
+          : actor.role === Role.COORDINATOR && actor.department
+            ? { requestedBy: { department: actor.department } }
+            : { requestedById: actor.id }),
         ...(statuses?.length ? { status: { in: statuses } } : {}),
       },
       orderBy: { createdAt: "desc" },
@@ -313,8 +320,8 @@ export class ChangesRepository {
             schedule,
             report,
             hardViolationCount: 0,
-            softTotal: 0,
-            softBreakdown: {},
+            softTotal: isJsonRecord(report) && typeof report.soft_total === "number" ? report.soft_total : 0,
+            softBreakdown: isJsonRecord(report) && isJsonRecord(report.soft_penalties) ? report.soft_penalties : {},
             parentId: change.baseTimetableId,
             publishedById: actor.id,
             publishedAt: new Date(),

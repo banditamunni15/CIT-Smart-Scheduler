@@ -244,7 +244,7 @@ export class TimetablesService {
       | "saveValidation"
       | "publish"
       | "deleteDraft"
-    >,
+    > & Partial<Pick<TimetablesRepository, "findApprovedRoomCommitments">>,
     private readonly engine: Pick<
       EngineClient,
       "generateTimetable" | "validateSchedule"
@@ -304,12 +304,27 @@ export class TimetablesService {
         "NO_PUBLISHED_TIMETABLE",
       );
     }
+    const commitments = await this.repository.findApprovedRoomCommitments?.(timetable.datasetId) ?? { decisions: [], overrides: [] };
+    if (isRecord(timetable.schedule) && Array.isArray(timetable.schedule.sessions)) {
+      const bySession = new Map(commitments.overrides.map((item) => [item.sessionId, item]));
+      const sessions = timetable.schedule.sessions.map((entry) => {
+        if (!isRecord(entry)) return entry;
+        const override = bySession.get(String(entry.session_id));
+        return override
+          ? { ...entry, day: override.toDay, start_period: override.toStart, room_id: override.toRoom }
+          : entry;
+      });
+      return { ...timetable, schedule: { ...timetable.schedule, sessions } };
+    }
     return timetable;
   }
 
   async getGroupView(groupId: string) {
     const timetable = await this.loadPublished();
-    const groups = listField(timetable.dataset.data, "groups");
+    const groupField = isRecord(timetable.dataset.data) && Array.isArray(timetable.dataset.data.student_groups)
+      ? "student_groups"
+      : "groups";
+    const groups = listField(timetable.dataset.data, groupField);
     if (
       !groups.some((group) => stringAt(group, ["group_id", "id"]) === groupId)
     ) {
@@ -359,7 +374,10 @@ export class TimetablesService {
         "There is no active dataset.",
         "NO_ACTIVE_DATASET",
       );
-    return listField(dataset.data, "groups");
+    const field = isRecord(dataset.data) && Array.isArray(dataset.data.student_groups)
+      ? "student_groups"
+      : "groups";
+    return listField(dataset.data, field);
   }
 
   async getFreeRooms(query: FreeRoomsQuery) {
@@ -381,7 +399,9 @@ export class TimetablesService {
           const length =
             typeof session.duration_periods === "number"
               ? session.duration_periods
-              : 1;
+              : typeof session.duration === "number"
+                ? session.duration
+                : 1;
           return (
             query.period >= entry.start_period &&
             query.period < entry.start_period + length
@@ -390,9 +410,26 @@ export class TimetablesService {
         .map((entry) => entry.room_id),
     );
 
+    const commitments = await this.repository.findApprovedRoomCommitments?.(timetable.datasetId) ?? { decisions: [], overrides: [] };
+    for (const booking of commitments.decisions) {
+      if (booking.day === query.day && booking.roomId && booking.startPeriod !== null && booking.endPeriod !== null &&
+          query.period >= booking.startPeriod && query.period <= booking.endPeriod) {
+        occupied.add(booking.roomId);
+      }
+    }
+    for (const override of commitments.overrides) {
+      if (override.toDay === query.day && query.period === override.toStart) occupied.add(override.toRoom);
+    }
+    const unavailableRooms = new Set<string>();
+    if (isRecord(dataset) && Array.isArray(dataset.room_unavailability)) {
+      for (const item of dataset.room_unavailability) {
+        if (!isRecord(item) || item.day !== query.day || !Array.isArray(item.periods)) continue;
+        if (item.periods.includes(query.period) && typeof item.room_id === "string") unavailableRooms.add(item.room_id);
+      }
+    }
     return [...getRoomIndex(dataset).entries()]
       .filter(([id, room]) => {
-        if (occupied.has(id)) return false;
+        if (occupied.has(id) || unavailableRooms.has(id)) return false;
         const capacity =
           typeof room.capacity === "number"
             ? room.capacity
