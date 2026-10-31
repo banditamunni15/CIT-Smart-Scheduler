@@ -382,6 +382,7 @@ model ChangeProposal {
   originalText       String?      // faculty's plain-words message, if any
   disruption         Json         // { changes: [...] } in the official disruption format
   proposedSchedule   Json?        // the full repaired schedule (schedule_after)
+  appliedDataset     Json?        // engine-produced dataset after applying the disruption
   diff               Json?        // [{session_id, from:{day,start,room}, to:{...}}]
   movedCount         Int?
   timeChangedCount   Int?

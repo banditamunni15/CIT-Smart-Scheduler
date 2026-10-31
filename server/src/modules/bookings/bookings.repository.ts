@@ -154,6 +154,7 @@ export class BookingsRepository {
             day: true,
             roomId: true,
             status: true,
+            isCurrent: true,
           },
         },
       },

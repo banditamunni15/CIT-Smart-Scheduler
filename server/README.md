@@ -84,6 +84,30 @@ session overrides remain submitted until an Admin revalidates and approves
 them. Coordinator listings are limited to requests tied to their department's
 users, rooms, or groups. `/api/bookings/parse` is not part of this phase.
 
+## Timetable change endpoints
+
+| Method | Path                              | Access                  | Purpose                                                         |
+| ------ | --------------------------------- | ----------------------- | --------------------------------------------------------------- |
+| `POST` | `/api/changes`                    | Admin                   | Submit an official disruption JSON object for repair            |
+| `POST` | `/api/changes/upload`             | Admin                   | Submit a JSON disruption file (`file` multipart field supported) |
+| `POST` | `/api/changes/unavailability`     | Faculty                 | Submit own faculty unavailability                               |
+| `POST` | `/api/changes/request`             | Coordinator or Faculty  | Request a session move or extra session                         |
+| `GET`  | `/api/changes`                    | Signed-in user          | List own proposals; Admin can filter with comma-separated status |
+| `GET`  | `/api/changes/:id`                | Owner or Admin          | Read proposal, diff, counts, report, conflicts, and explanation  |
+| `POST` | `/api/changes/:id/dept-approve`   | Coordinator             | Approve a faculty proposal from the coordinator's department    |
+| `POST` | `/api/changes/:id/approve`        | Admin                   | Validate and apply a repaired change                            |
+| `POST` | `/api/changes/:id/reject`         | Admin                   | Reject a proposal with `{ "note": "..." }`                      |
+| `POST` | `/api/changes/:id/withdraw`       | Requester                | Withdraw before the engine makes a decision                      |
+
+Disruption bodies use `{ "changes": [...] }` with the official change types:
+`faculty_unavailable`, `room_unavailable`, `add_session`, `add_faculty`, and
+`remove_session`. Unknown fields are retained and forwarded to the engine.
+Submissions create repair jobs and never modify the live dataset or timetable.
+An approved repair creates a new `CHANGE_APPLIED` dataset version and publishes
+a child timetable in one transaction. Engine repairs use
+`POST {ENGINE_URL}/repair`; mock mode requires
+`ENGINE_MOCK_REPAIR_RESULT`.
+
 ## Dataset and settings endpoints
 
 | Method | Path                           | Access | Purpose                                                        |

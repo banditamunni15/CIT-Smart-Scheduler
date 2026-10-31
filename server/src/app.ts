@@ -13,6 +13,7 @@ import jobsRouter from "./modules/jobs/jobs.routes.js";
 import timetablesRouter from "./modules/timetables/timetables.routes.js";
 import publicTimetablesRouter from "./modules/timetables/timetables.public.routes.js";
 import bookingsRouter from "./modules/bookings/bookings.routes.js";
+import changesRouter from "./modules/changes/changes.routes.js";
 
 const app: Express = express();
 
@@ -31,6 +32,7 @@ app.use("/api/public", publicTimetablesRouter);
 app.use("/api/exams", examsRouter);
 app.use("/api/public/exams", publicExamsRouter);
 app.use("/api/bookings", bookingsRouter);
+app.use("/api/changes", changesRouter);
 app.use(notFound);
 app.use(errorHandler);
 export default app;

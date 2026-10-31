@@ -97,62 +97,62 @@ const makeRepository = (
   overrides: Partial<Record<keyof RepositoryPort, unknown>> = {},
 ): RepositoryPort =>
   ({
-  findActiveDataset: vi.fn(async () => activeDataset),
-  findDatasetById: vi.fn(async () => activeDataset),
-  findRequester: vi.fn(async () => ({
-    id: "faculty-1",
-    name: "Faculty One",
-    clubName: null,
-    role: Role.FACULTY,
-  })),
-  findPriorityOrder: vi.fn(async () => ({ value: dataset.priority_order })),
-  findPublishedTimetable: vi.fn(async () => timetable),
-  findPublishedTimetableById: vi.fn(async () => timetable),
-  listCandidates: vi.fn(async () => []),
-  findAllForDataset: vi.fn(async () => []),
-  findOverridesForValidation: vi.fn(async () => []),
-  findCurrentDecisions: vi.fn(async () => []),
-  findById: vi.fn(async () => null),
-  findBySeries: vi.fn(async () => []),
-  createRequest: vi.fn(async () => {
-    throw new Error("createRequest fixture was not configured");
-  }),
-  updateRequest: vi.fn(async () => {
-    throw new Error("updateRequest fixture was not configured");
-  }),
-  cancelRequest: vi.fn(async () => {
-    throw new Error("cancelRequest fixture was not configured");
-  }),
-  enqueueDecision: vi.fn(async () => ({
-    id: "job-1",
-    kind: JobKind.DECIDE_BOOKINGS,
-    state: JobState.QUEUED,
-    progress: 0,
-    message: null,
-    params: null,
-    resultType: null,
-    resultId: null,
-    error: null,
-    createdById: "admin-1",
-    startedAt: null,
-    finishedAt: null,
-    createdAt: now,
-  })),
-  persistEngineDecisions: vi.fn(async () => []),
-  addManualDecision: vi.fn(async () => {
-    throw new Error("addManualDecision fixture was not configured");
-  }),
-  findDecision: vi.fn(async () => null),
-  createOverrideDecision: vi.fn(async () => {
-    throw new Error("createOverrideDecision fixture was not configured");
-  }),
-  approveDecision: vi.fn(async () => ({ id: "decision-1" })),
-  rejectDecision: vi.fn(async () => ({ id: "decision-1" })),
-  auditDepartmentApproval: vi.fn(async () => ({
-    id: "decision-1",
-    approvalState: ApprovalState.PENDING_ADMIN,
-  })),
-  ...overrides,
+    findActiveDataset: vi.fn(async () => activeDataset),
+    findDatasetById: vi.fn(async () => activeDataset),
+    findRequester: vi.fn(async () => ({
+      id: "faculty-1",
+      name: "Faculty One",
+      clubName: null,
+      role: Role.FACULTY,
+    })),
+    findPriorityOrder: vi.fn(async () => ({ value: dataset.priority_order })),
+    findPublishedTimetable: vi.fn(async () => timetable),
+    findPublishedTimetableById: vi.fn(async () => timetable),
+    listCandidates: vi.fn(async () => []),
+    findAllForDataset: vi.fn(async () => []),
+    findOverridesForValidation: vi.fn(async () => []),
+    findCurrentDecisions: vi.fn(async () => []),
+    findById: vi.fn(async () => null),
+    findBySeries: vi.fn(async () => []),
+    createRequest: vi.fn(async () => {
+      throw new Error("createRequest fixture was not configured");
+    }),
+    updateRequest: vi.fn(async () => {
+      throw new Error("updateRequest fixture was not configured");
+    }),
+    cancelRequest: vi.fn(async () => {
+      throw new Error("cancelRequest fixture was not configured");
+    }),
+    enqueueDecision: vi.fn(async () => ({
+      id: "job-1",
+      kind: JobKind.DECIDE_BOOKINGS,
+      state: JobState.QUEUED,
+      progress: 0,
+      message: null,
+      params: null,
+      resultType: null,
+      resultId: null,
+      error: null,
+      createdById: "admin-1",
+      startedAt: null,
+      finishedAt: null,
+      createdAt: now,
+    })),
+    persistEngineDecisions: vi.fn(async () => []),
+    addManualDecision: vi.fn(async () => {
+      throw new Error("addManualDecision fixture was not configured");
+    }),
+    findDecision: vi.fn(async () => null),
+    createOverrideDecision: vi.fn(async () => {
+      throw new Error("createOverrideDecision fixture was not configured");
+    }),
+    approveDecision: vi.fn(async () => ({ id: "decision-1" })),
+    rejectDecision: vi.fn(async () => ({ id: "decision-1" })),
+    auditDepartmentApproval: vi.fn(async () => ({
+      id: "decision-1",
+      approvalState: ApprovalState.PENDING_ADMIN,
+    })),
+    ...overrides,
   }) as unknown as RepositoryPort;
 
 const makeJobs = (
@@ -199,9 +199,7 @@ const requestListRow = {
   ...requestRow,
   requester: { department: "ECE" },
   decisions: [],
-} satisfies Awaited<
-  ReturnType<BookingsRepository["listCandidates"]>
->[number];
+} satisfies Awaited<ReturnType<BookingsRepository["listCandidates"]>>[number];
 
 let actor: RequestUser | undefined;
 
@@ -316,6 +314,46 @@ describe("booking business rules", () => {
     );
   });
 
+  it("uses the active dataset priority order ahead of the saved setting", async () => {
+    const createRequest = vi.fn(async () => requestRow);
+    const customDataset = {
+      ...dataset,
+      priority_order: [
+        "CLUB_EVENT",
+        "INSTITUTE_EVENT",
+        "GUEST_LECTURE",
+        "DEPARTMENT_EVENT",
+      ],
+    };
+    const repository = makeRepository({
+      findActiveDataset: vi.fn(async () => ({
+        id: "dataset-1",
+        data: customDataset,
+      })),
+      createRequest,
+    });
+    const service = new BookingsService(
+      repository,
+      {} as Pick<
+        EngineClient,
+        "checkBookingDraft" | "decideBookings" | "validate"
+      >,
+    );
+
+    await service.create(faculty, {
+      ...body,
+      requestedCategory: BookingCategory.CLUB_EVENT,
+    });
+
+    expect(createRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestedCategory: BookingCategory.CLUB_EVENT,
+        effectiveCategory: BookingCategory.DEPARTMENT_EVENT,
+      }),
+      expect.anything(),
+    );
+  });
+
   it("scopes coordinator lists by department users, rooms, and groups", async () => {
     const otherRequest = {
       ...requestListRow,
@@ -338,6 +376,33 @@ describe("booking business rules", () => {
     expect(result.total).toBe(1);
     expect(result.items[0]?.id).toBe("request-1");
     expect(result.items[0]?.currentDecision).toBeNull();
+  });
+
+  it("includes requests scheduled into a coordinator's department room", async () => {
+    const scheduledRequest = {
+      ...requestListRow,
+      requestedRoom: "R2",
+      decisions: [
+        {
+          day: "MON",
+          roomId: "R1",
+          status: DecisionStatus.APPROVED,
+          isCurrent: true,
+        },
+      ],
+    };
+    const repository = makeRepository({
+      listCandidates: vi.fn(async () => [scheduledRequest]),
+    });
+    const service = new BookingsService(repository, makeEngine());
+
+    const result = await service.list(
+      { ...faculty, role: Role.COORDINATOR },
+      { page: 1, limit: 20 },
+    );
+
+    expect(result.total).toBe(1);
+    expect(result.items[0]?.id).toBe("request-1");
   });
 
   it("cancels the request and delegates current-decision invalidation", async () => {

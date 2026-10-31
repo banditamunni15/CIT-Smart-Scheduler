@@ -71,24 +71,30 @@ const priorityOrderFor = (
   dataset: Prisma.JsonValue,
   setting: Prisma.JsonValue | undefined,
 ): BookingCategory[] => {
-  const candidates = [
-    ...(Array.isArray(setting) ? setting : []),
-    ...(isRecord(dataset) && Array.isArray(dataset.priority_order)
-      ? dataset.priority_order
-      : []),
-  ];
-  const supplied = candidates
-    .map(toCategory)
-    .filter((category): category is BookingCategory => category !== undefined);
+  const normalize = (value: Prisma.JsonValue | undefined) => {
+    if (!Array.isArray(value)) return undefined;
+    const categories = value
+      .map(toCategory)
+      .filter(
+        (category): category is BookingCategory => category !== undefined,
+      );
+    return categories.length === 4 && new Set(categories).size === 4
+      ? categories
+      : undefined;
+  };
+  const datasetOrder = normalize(
+    isRecord(dataset) ? dataset.priority_order : undefined,
+  );
+  if (datasetOrder) return datasetOrder;
+  const settingOrder = normalize(setting);
+  if (settingOrder) return settingOrder;
   const fallback = [
     BookingCategory.INSTITUTE_EVENT,
     BookingCategory.GUEST_LECTURE,
     BookingCategory.DEPARTMENT_EVENT,
     BookingCategory.CLUB_EVENT,
   ];
-  return supplied.length === 4 && new Set(supplied).size === 4
-    ? supplied
-    : fallback;
+  return fallback;
 };
 
 const roleCategoryCap = (
@@ -197,7 +203,13 @@ const mapBookingFromList = (request: {
   const { decisions, ...booking } = request;
   return {
     ...booking,
-    currentDecision: decisions[0] ?? null,
+    currentDecision: decisions[0]
+      ? {
+          day: decisions[0].day,
+          roomId: decisions[0].roomId,
+          status: decisions[0].status,
+        }
+      : null,
   };
 };
 
@@ -413,12 +425,7 @@ export class BookingsService {
   async manual(actor: RequestUser, body: BookingManualBody) {
     const { dataset, priority } = await this.activeDatasetAndPriority();
     const timetable = await this.requirePublishedTimetable(dataset.id);
-    this.assertCoordinatorRoomScope(
-      actor,
-      body.roomId,
-      [],
-      dataset.data,
-    );
+    this.assertCoordinatorRoomScope(actor, body.roomId, [], dataset.data);
     if (actor.role === Role.COORDINATOR) {
       const scope = groupAndRoomIdsForDepartment(
         dataset.data,
@@ -619,12 +626,16 @@ export class BookingsService {
     if (!decision || decision.request.datasetId !== dataset.id) {
       throw new NotFoundError("The booking decision was not found.");
     }
-    if (!this.isLabBooking(decision.request, dataset.data)) {
+    const request = {
+      ...decision.request,
+      requestedRoom: decision.roomId ?? decision.request.requestedRoom,
+    };
+    if (!this.isLabBooking(request, dataset.data)) {
       throw new ForbiddenError("Department approval is only for lab bookings.");
     }
     this.assertCoordinatorRoomScope(
       actor,
-      decision.request.requestedRoom ?? "",
+      request.requestedRoom ?? "",
       decision.request.mandatoryForGroups,
       dataset.data,
     );
@@ -875,7 +886,7 @@ export class BookingsService {
     const base = toDatasetObject(data);
     return {
       ...base,
-      ...(priority === undefined ? {} : { priority_order: priority }),
+      priority_order: priorityOrderFor(data, priority),
       booking_requests: requests.map((request) => ({
         request_id: request.id,
         id: request.id,
@@ -1053,6 +1064,7 @@ export class BookingsService {
       requester: { department: string | null } | null;
       requestedRoom: string | null;
       mandatoryForGroups: string[];
+      decisions?: Array<{ roomId: string | null; isCurrent?: boolean }>;
     },
   >(records: T[], actor: RequestUser, data: Prisma.JsonValue): T[] {
     if (actor.role === Role.ADMIN) return records;
@@ -1065,6 +1077,7 @@ export class BookingsService {
         record.requester?.department === actor.department ||
         (record.requestedRoom !== null &&
           scope.rooms.has(record.requestedRoom)) ||
+        this.hasCurrentRoomInScope(record, scope.rooms) ||
         record.mandatoryForGroups.some((group) => scope.groups.has(group)),
     );
   }
@@ -1075,6 +1088,7 @@ export class BookingsService {
       requestedRoom: string | null;
       mandatoryForGroups: string[];
       requester: { department: string | null } | null;
+      decisions?: Array<{ roomId: string | null; isCurrent?: boolean }>;
     },
     actor: RequestUser,
     data: Prisma.JsonValue,
@@ -1086,8 +1100,21 @@ export class BookingsService {
       record.requester?.department === actor.department ||
       (record.requestedRoom !== null &&
         scope.rooms.has(record.requestedRoom)) ||
+      this.hasCurrentRoomInScope(record, scope.rooms) ||
       record.mandatoryForGroups.some((group) => scope.groups.has(group))
     );
+  }
+
+  private hasCurrentRoomInScope(
+    record: {
+      decisions?: Array<{ roomId: string | null; isCurrent?: boolean }>;
+    },
+    roomIds: Set<string>,
+  ) {
+    const roomId = record.decisions?.find(
+      (decision) => decision.isCurrent === true,
+    )?.roomId;
+    return roomId !== undefined && roomId !== null && roomIds.has(roomId);
   }
 
   private assertCoordinatorRoomScope(

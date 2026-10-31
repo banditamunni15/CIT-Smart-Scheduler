@@ -71,11 +71,36 @@ const bookingDraftCheckSchema = z.object({
   issues: z.array(jsonValueSchema),
 });
 
+const repairResultSchema = z.discriminatedUnion("status", [
+  z
+    .object({
+      status: z.literal("proposed"),
+      schedule_after: z.record(z.string(), jsonValueSchema),
+      diff: z.array(jsonValueSchema),
+      moved_count: z.number().int().nonnegative().optional(),
+      time_changed_count: z.number().int().nonnegative().optional(),
+      room_only_count: z.number().int().nonnegative().optional(),
+      report: z
+        .object({ hard_violation_count: z.number().int().nonnegative() })
+        .catchall(jsonValueSchema),
+      applied_dataset: z.record(z.string(), jsonValueSchema).optional(),
+    })
+    .passthrough(),
+  z
+    .object({
+      status: z.literal("impossible"),
+      conflicts: jsonValueSchema,
+      explanation: z.string().min(1),
+    })
+    .passthrough(),
+]);
+
 export type ExamGenerationResult = z.infer<typeof examResultSchema>;
 export type DatasetValidationResult = z.infer<typeof validationResultSchema>;
 export type TimetableGenerationResult = z.infer<typeof timetableResultSchema>;
 export type BookingDecisionResult = z.infer<typeof bookingDecisionResultSchema>;
 export type BookingDraftCheckResult = z.infer<typeof bookingDraftCheckSchema>;
+export type RepairResult = z.infer<typeof repairResultSchema>;
 
 export interface EngineClient {
   validate(dataset: Prisma.InputJsonObject): Promise<DatasetValidationResult>;
@@ -99,6 +124,12 @@ export interface EngineClient {
     dataset: Prisma.InputJsonObject,
     publishedTimetable: Prisma.JsonValue,
   ): Promise<BookingDecisionResult>;
+  repair(
+    dataset: Prisma.InputJsonObject,
+    publishedTimetable: Prisma.JsonValue,
+    disruption: Prisma.InputJsonObject,
+    timeLimit: number,
+  ): Promise<RepairResult>;
 }
 
 const parseResult = (value: unknown): ExamGenerationResult => {
@@ -176,6 +207,21 @@ const parseBookingDraftCheck = (value: unknown): BookingDraftCheckResult => {
   return parsed.data;
 };
 
+const parseRepairResult = (value: unknown): RepairResult => {
+  const parsed = repairResultSchema.safeParse(value);
+  if (!parsed.success) {
+    throw new ValidationError(
+      "The engine returned an invalid timetable repair response.",
+      "ENGINE_OUTPUT_INVALID",
+      parsed.error.issues.map((issue) => ({
+        path: issue.path.join("."),
+        message: issue.message,
+      })),
+    );
+  }
+  return parsed.data;
+};
+
 export class RealEngine implements EngineClient {
   async validate(
     dataset: Prisma.InputJsonObject,
@@ -234,6 +280,22 @@ export class RealEngine implements EngineClient {
       await this.post("decide-bookings", {
         dataset,
         published_timetable: publishedTimetable,
+      }),
+    );
+  }
+
+  async repair(
+    dataset: Prisma.InputJsonObject,
+    publishedTimetable: Prisma.JsonValue,
+    disruption: Prisma.InputJsonObject,
+    timeLimit: number,
+  ): Promise<RepairResult> {
+    return parseRepairResult(
+      await this.post("repair", {
+        dataset,
+        published_timetable: publishedTimetable,
+        disruption,
+        time_limit: timeLimit,
       }),
     );
   }
@@ -311,12 +373,13 @@ export class MockEngine implements EngineClient {
       | (() => TimetableGenerationResult | Promise<TimetableGenerationResult>),
     private readonly bookingDraftFixture?:
       | BookingDraftCheckResult
-      | (() =>
-          | BookingDraftCheckResult
-          | Promise<BookingDraftCheckResult>),
+      | (() => BookingDraftCheckResult | Promise<BookingDraftCheckResult>),
     private readonly bookingDecisionsFixture?:
       | BookingDecisionResult
       | (() => BookingDecisionResult | Promise<BookingDecisionResult>),
+    private readonly repairFixture?:
+      | RepairResult
+      | (() => RepairResult | Promise<RepairResult>),
   ) {}
 
   async validate(): Promise<DatasetValidationResult> {
@@ -394,6 +457,20 @@ export class MockEngine implements EngineClient {
         ? await this.bookingDecisionsFixture()
         : this.bookingDecisionsFixture;
     return parseBookingDecisionResult(result);
+  }
+
+  async repair(): Promise<RepairResult> {
+    if (!this.repairFixture) {
+      throw new ServiceUnavailableError(
+        "No mock timetable-repair fixture has been configured.",
+        "ENGINE_UNAVAILABLE",
+      );
+    }
+    const result =
+      typeof this.repairFixture === "function"
+        ? await this.repairFixture()
+        : this.repairFixture;
+    return parseRepairResult(result);
   }
 }
 
@@ -497,6 +574,25 @@ export const createEngine = (): EngineClient => {
         );
       }
       return parseBookingDecisionResult(fixture);
+    },
+    () => {
+      const rawFixture = env.ENGINE_MOCK_REPAIR_RESULT;
+      if (!rawFixture) {
+        throw new ServiceUnavailableError(
+          "ENGINE_MODE=mock requires ENGINE_MOCK_REPAIR_RESULT.",
+          "ENGINE_UNAVAILABLE",
+        );
+      }
+      let fixture: unknown;
+      try {
+        fixture = JSON.parse(rawFixture);
+      } catch {
+        throw new ValidationError(
+          "ENGINE_MOCK_REPAIR_RESULT must contain valid JSON.",
+          "ENGINE_OUTPUT_INVALID",
+        );
+      }
+      return parseRepairResult(fixture);
     },
   );
 };
