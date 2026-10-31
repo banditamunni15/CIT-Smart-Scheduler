@@ -58,7 +58,7 @@ const normalizeGroupExam = (value: Prisma.JsonValue): GroupExam | null => {
   const examId = getString(value.exam_id);
   const day = getString(value.day);
   const session = getString(value.session);
-  const course = value.course ?? value.course_id;
+  const course = value.course ?? value.course_id ?? value.course_ids;
   const rooms = value.rooms;
   if (
     !examId ||

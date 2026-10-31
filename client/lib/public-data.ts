@@ -79,14 +79,22 @@ export function normalizePublicExams(value: unknown): PublicExam[] {
   if (!Array.isArray(value)) return [];
   return value.map((raw, index) => {
     const record = recordOf(raw);
-    const courseValue = pick(record, ["course", "course_id", "courseId"]);
+    const courseValue = pick(record, [
+      "course",
+      "course_id",
+      "courseId",
+      "course_ids",
+    ]);
     const courseRecord = recordOf(courseValue);
-    const course = valueText(
-      typeof courseValue === "object"
-        ? pick(courseRecord, ["course_id", "id", "code", "name", "title"])
-        : courseValue,
-      "Course",
-    );
+    const course = Array.isArray(courseValue)
+      ? courseValue.map((item) => valueText(item)).filter(Boolean).join(", ") ||
+        "Course"
+      : valueText(
+          typeof courseValue === "object"
+            ? pick(courseRecord, ["course_id", "id", "code", "name", "title"])
+            : courseValue,
+          "Course",
+        );
     const roomsValue = record.rooms;
     const rooms = Array.isArray(roomsValue)
       ? roomsValue.map((room) => valueText(room)).filter(Boolean)

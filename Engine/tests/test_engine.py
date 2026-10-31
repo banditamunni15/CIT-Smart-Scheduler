@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from Engine.app.main import app
 from Engine.app.common import verify_validator
 from Engine.app.solver.prepare import prepare_dataset
+from Engine.app.solver.exams import generate_exams
 from Engine.app.bookings.engine import decide_bookings
 from Engine.app.explain import explain_session, explain_booking
 
@@ -75,6 +76,50 @@ def test_booking_explanation(schedule, dataset):
     request_id = dataset["booking_requests"][0]["id"]
     result = explain_booking(dataset, schedule, request_id)
     assert result is not None
+
+
+def test_generated_exams_include_public_schedule_fields():
+    dataset = {
+        "calendar": {
+            "days": ["MON"],
+            "lab_start_periods": [1],
+            "lunch": {"after_period": 4},
+            "exam_week": {
+                "days": ["MON"],
+                "sessions": [{"id": "AM"}, {"id": "PM"}],
+            },
+        },
+        "rooms": [
+            {
+                "id": "R1",
+                "capacity": 20,
+                "allowed_uses": ["exam"],
+            },
+        ],
+        "faculty": [],
+        "student_groups": [{"id": "G1"}],
+        "sessions": [],
+        "booking_requests": [],
+        "exams": [
+            {
+                "id": "EX-1",
+                "course_ids": ["CS101"],
+                "groups": ["G1"],
+                "size": 10,
+            },
+        ],
+    }
+
+    exams, report, _ = generate_exams(dataset, time_limit_s=2)
+
+    assert report["hard_violation_count"] == 0
+    assert len(exams) == 1
+    assert exams[0]["exam_id"] == "EX-1"
+    assert exams[0]["course_ids"] == ["CS101"]
+    assert exams[0]["group_ids"] == ["G1"]
+    assert exams[0]["day"] == "MON"
+    assert exams[0]["session"] in {"AM", "PM"}
+    assert exams[0]["rooms"] == ["R1"]
 
 
 def test_health_endpoint():

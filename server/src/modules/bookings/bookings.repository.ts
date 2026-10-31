@@ -151,9 +151,11 @@ export class BookingsRepository {
         decisions: {
           where: { isCurrent: true },
           select: {
+            id: true,
             day: true,
             roomId: true,
             status: true,
+            approvalState: true,
             isCurrent: true,
           },
         },
@@ -712,7 +714,10 @@ export class BookingsRepository {
       });
       if (!decision)
         throw new NotFoundError("The booking decision was not found.");
-      if (![ApprovalState.PENDING_ADMIN, ApprovalState.DEPT_APPROVED].includes(decision.approvalState)) {
+      if (
+        decision.approvalState !== ApprovalState.PENDING_ADMIN &&
+        decision.approvalState !== ApprovalState.DEPT_APPROVED
+      ) {
         throw new ConflictError(
           "The booking decision is not awaiting approval.",
           "STALE_STATE",

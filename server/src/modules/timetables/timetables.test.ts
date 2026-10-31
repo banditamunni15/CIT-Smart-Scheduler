@@ -164,12 +164,36 @@ const admin: RequestUser = {
 describe("timetable routes", () => {
   it("queues generation with a job id", async () => {
     const service = makeService();
+    const generate = vi.spyOn(service, "generate");
     const response = await request(makeApp(service, admin)).post(
       "/api/timetables/generate",
     );
 
     expect(response.status).toBe(202);
     expect(response.body.data).toEqual({ jobId: "job-1" });
+    expect(generate).toHaveBeenCalledWith(admin, 60);
+  });
+
+  it("passes the requested solver time limit to generation", async () => {
+    const service = makeService();
+    const generate = vi.spyOn(service, "generate");
+    const response = await request(makeApp(service, admin))
+      .post("/api/timetables/generate")
+      .send({ timeLimit: 120 });
+
+    expect(response.status).toBe(202);
+    expect(generate).toHaveBeenCalledWith(admin, 120);
+  });
+
+  it("rejects solver time limits outside the supported range", async () => {
+    const service = makeService();
+    const generate = vi.spyOn(service, "generate");
+    const response = await request(makeApp(service, admin))
+      .post("/api/timetables/generate")
+      .send({ timeLimit: 301 });
+
+    expect(response.status).toBe(422);
+    expect(generate).not.toHaveBeenCalled();
   });
 
   it("returns paginated timetable metadata to admins", async () => {
@@ -194,6 +218,16 @@ describe("timetable routes", () => {
     ).get("/api/timetables");
 
     expect(response.status).toBe(403);
+  });
+
+  it("includes the source dataset in an admin timetable detail response", async () => {
+    const service = makeService();
+    const response = await request(makeApp(service, admin)).get(
+      "/api/timetables/timetable-1",
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.dataset.data).toEqual(dataset);
   });
 
   it("returns a public group timetable without authentication", async () => {
@@ -252,6 +286,58 @@ describe("timetable routes", () => {
 });
 
 describe("timetable generation", () => {
+  it("persists the selected solver time limit and forwards it to the engine", async () => {
+    let capturedHandler: JobHandler | undefined;
+    const repository = makeRepository();
+    const jobs: Pick<JobService, "process" | "resumeQueued"> = {
+      process: vi.fn(async (_jobId, handler) => {
+        capturedHandler = handler;
+      }),
+      resumeQueued: vi.fn(async () => undefined),
+    };
+    const engine: Pick<EngineClient, "generateTimetable" | "validateSchedule"> = {
+      generateTimetable: vi.fn(async () => ({
+        schedule,
+        report,
+        soft_total: 0,
+        soft_breakdown: {},
+      })),
+      validateSchedule: vi.fn(async () => ({ report })),
+    };
+    const service = new TimetablesService(repository, engine, jobs);
+    const actor = { id: "admin-1", role: Role.ADMIN };
+
+    await service.generate(actor, 120);
+
+    expect(repository.enqueueGeneration).toHaveBeenCalledWith(
+      actor,
+      "dataset-1",
+      120,
+    );
+
+    const generationJob = {
+      id: "job-1",
+      kind: JobKind.GENERATE_TIMETABLE,
+      state: JobState.QUEUED,
+      progress: 0,
+      message: null,
+      params: { datasetId: "dataset-1", timeLimit: 120 },
+      resultType: null,
+      resultId: null,
+      error: null,
+      createdById: "admin-1",
+      startedAt: null,
+      finishedAt: null,
+      createdAt,
+      createdBy: { role: Role.ADMIN },
+    } satisfies Prisma.JobGetPayload<{
+      include: { createdBy: { select: { role: true } } };
+    }>;
+    await capturedHandler?.(generationJob);
+
+    expect(engine.generateTimetable).toHaveBeenCalledWith(dataset, 120);
+  });
+
   it("does not save a generated timetable when validation reports hard violations", async () => {
     let capturedHandler: JobHandler | undefined;
     const repository = makeRepository();

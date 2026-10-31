@@ -45,7 +45,7 @@ type TimetableDetail = {
   softTotal: number;
   softBreakdown: unknown;
   solverMeta: unknown;
-  dataset: { data: unknown };
+  dataset?: { data?: unknown } | null;
 };
 
 const softObjectiveLabels: Record<string, string> = {
@@ -101,7 +101,7 @@ function TimetableDetailContent() {
     onError: showApiError,
   });
 
-  const dataset = asRecord(timetable.data?.dataset.data);
+  const dataset = asRecord(timetable.data?.dataset?.data);
   const datasetSessions = asArray(dataset.sessions);
   const sessionById = new Map(
     datasetSessions.map((session) => [

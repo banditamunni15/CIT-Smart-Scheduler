@@ -128,14 +128,28 @@ const datasetWithPriority = (
     : { ...input, priority_order: priority };
 };
 
-const getJobDatasetId = (params: Prisma.JsonValue | null): string => {
+const getJobGenerationParams = (
+  params: Prisma.JsonValue | null,
+): { datasetId: string; timeLimit: number } => {
   if (!params || !isRecord(params) || typeof params.datasetId !== "string") {
     throw new ValidationError(
       "The generation job has invalid dataset parameters.",
       "DATASET_INVALID",
     );
   }
-  return params.datasetId;
+  const timeLimit = params.timeLimit === undefined ? 20 : params.timeLimit;
+  if (
+    typeof timeLimit !== "number" ||
+    !Number.isInteger(timeLimit) ||
+    timeLimit < 5 ||
+    timeLimit > 300
+  ) {
+    throw new ValidationError(
+      "The generation job has an invalid solver time limit.",
+      "DATASET_INVALID",
+    );
+  }
+  return { datasetId: params.datasetId, timeLimit };
 };
 
 const assertNoHardViolations = (validation: DatasetValidationResult): void => {
@@ -257,7 +271,10 @@ export class TimetablesService {
     this.generateJob = (job) => this.generateFromJob(job);
   }
 
-  async generate(actor: TimetableActor): Promise<{ jobId: string }> {
+  async generate(
+    actor: TimetableActor,
+    timeLimit = 60,
+  ): Promise<{ jobId: string }> {
     const dataset = await this.repository.findActiveDataset();
     if (!dataset) {
       throw new ConflictError(
@@ -265,7 +282,11 @@ export class TimetablesService {
         "NO_ACTIVE_DATASET",
       );
     }
-    const job = await this.repository.enqueueGeneration(actor, dataset.id);
+    const job = await this.repository.enqueueGeneration(
+      actor,
+      dataset.id,
+      timeLimit,
+    );
     void this.jobs.process(job.id, this.generateJob);
     return { jobId: job.id };
   }
@@ -280,8 +301,7 @@ export class TimetablesService {
 
   async getById(id: string) {
     const timetable = await this.loadById(id);
-    const { dataset: _dataset, ...details } = timetable;
-    return details;
+    return timetable;
   }
 
   private async loadById(id: string) {
@@ -502,13 +522,16 @@ export class TimetablesService {
   private async generateFromJob(
     job: Job & { createdBy?: { role: Role } | null },
   ) {
-    const datasetId = getJobDatasetId(job.params);
+    const { datasetId, timeLimit } = getJobGenerationParams(job.params);
     const dataset = await this.repository.findDatasetById(datasetId);
     if (!dataset)
       throw new ConflictError("The job dataset was not found.", "STALE_STATE");
     const priority = await this.repository.findPriorityOrder();
     const engineDataset = datasetWithPriority(dataset.data, priority?.value);
-    const generated = await this.engine.generateTimetable(engineDataset);
+    const generated = await this.engine.generateTimetable(
+      engineDataset,
+      timeLimit,
+    );
     const validation = await this.engine.validateSchedule(
       engineDataset,
       generated.schedule,

@@ -78,12 +78,12 @@ python -m pip install -r Engine/requirements.txt
 From the repository root:
 
 ```powershell
-uvicorn Engine.app.main:app --host 127.0.0.1 --port 8080 --reload
+uvicorn Engine.app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 API documentation:
 
-http://127.0.0.1:8080/docs
+http://127.0.0.1:8000/docs
 
 ## 6. API Endpoints
 

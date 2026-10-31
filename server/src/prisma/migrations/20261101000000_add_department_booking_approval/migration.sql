@@ -1,0 +1,1 @@
+ALTER TYPE "ApprovalState" ADD VALUE 'DEPT_APPROVED';

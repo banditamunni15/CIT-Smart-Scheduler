@@ -13,6 +13,7 @@ import {
   groupParamsSchema,
   manualValidationBodySchema,
   roomParamsSchema,
+  timetableGenerateBodySchema,
   timetableIdParamsSchema,
   timetableListQuerySchema,
 } from "./timetables.schema.js";
@@ -28,6 +29,7 @@ export const createTimetablesRouter = (
     "/generate",
     authenticate,
     requireRole(Role.ADMIN),
+    validate({ body: timetableGenerateBodySchema }),
     controller.generate,
   );
   router.get(

@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { ChevronDown, LoaderCircle } from "lucide-react";
+import { ChevronDown, Eye, EyeOff, LoaderCircle } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { signIn } from "@/lib/auth-client";
 import { ApiClientError, get } from "@/lib/api";
@@ -37,6 +37,7 @@ export default function LoginPage() {
   const queryClient = useQueryClient();
   const [serverError, setServerError] = useState("");
   const [pending, setPending] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const form = useForm<Credentials>({
     resolver: zodResolver(credentialsSchema),
     defaultValues: { email: "", password: "" },
@@ -116,13 +117,27 @@ export default function LoginPage() {
                 <label htmlFor="password" className="text-sm font-medium">
                   Password
                 </label>
-                <Input
-                  id="password"
-                  type="password"
-                  autoComplete="current-password"
-                  aria-invalid={Boolean(form.formState.errors.password)}
-                  {...form.register("password")}
-                />
+                <div className="relative">
+                  <Input
+                    id="password"
+                    type={showPassword ? "text" : "password"}
+                    autoComplete="current-password"
+                    aria-invalid={Boolean(form.formState.errors.password)}
+                    className="pr-10"
+                    {...form.register("password")}
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="absolute top-1/2 right-1 -translate-y-1/2"
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                    aria-pressed={showPassword}
+                    onClick={() => setShowPassword((visible) => !visible)}
+                  >
+                    {showPassword ? <EyeOff /> : <Eye />}
+                  </Button>
+                </div>
                 {form.formState.errors.password ? (
                   <p className="text-xs text-destructive">
                     {form.formState.errors.password.message}
@@ -140,6 +155,13 @@ export default function LoginPage() {
                 {pending ? "Signing in…" : "Sign in"}
               </Button>
             </form>
+
+            <p className="mt-4 text-center text-sm text-muted-foreground">
+              Need an account?{" "}
+              <Link href="/create-account" className="font-medium text-foreground underline-offset-4 hover:underline">
+                Create account
+              </Link>
+            </p>
 
             <Collapsible className="mt-6 border-t pt-4">
               <CollapsibleTrigger className="flex w-full items-center justify-between text-sm font-medium">

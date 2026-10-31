@@ -11,6 +11,7 @@ import { showApiError } from "@/lib/errors";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -75,7 +76,9 @@ function visibleNavigation(role: UserRole | undefined) {
     .map((group) => ({
       ...group,
       items: group.items.filter((item) =>
-        hasRole(role ? { role } : undefined, item.roles),
+        hasRole(role ? { role } : undefined, item.roles) &&
+        !(role === "ADMIN" && group.label === undefined &&
+          (item.href === "/timetable" || item.href === "/exams")),
       ),
     }))
     .filter((group) => group.items.length > 0);
@@ -158,12 +161,14 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <ChevronDown aria-hidden="true" className="size-4" />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56">
-                <DropdownMenuLabel>
-                  <span className="block truncate">{user.name}</span>
-                  <span className="mt-1 inline-block rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-[11px] font-medium capitalize text-gray-600">
-                    {roleLabel(user.role)}
-                  </span>
-                </DropdownMenuLabel>
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel>
+                    <span className="block truncate">{user.name}</span>
+                    <span className="mt-1 inline-block rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-[11px] font-medium capitalize text-gray-600">
+                      {roleLabel(user.role)}
+                    </span>
+                  </DropdownMenuLabel>
+                </DropdownMenuGroup>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={() => void handleSignOut()}>
                   <LogOut aria-hidden="true" />

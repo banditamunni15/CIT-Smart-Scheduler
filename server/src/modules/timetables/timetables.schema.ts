@@ -10,6 +10,13 @@ export const timetableListQuerySchema = z
   })
   .strict();
 
+export const timetableGenerateBodySchema = z
+  .object({
+    timeLimit: z.number().int().min(5).max(300).default(60),
+  })
+  .strict()
+  .default({ timeLimit: 60 });
+
 export const timetableIdParamsSchema = z
   .object({ id: z.string().min(1) })
   .strict();
@@ -53,5 +60,6 @@ export const freeRoomsQuerySchema = z
   .strict();
 
 export type TimetableListQuery = z.infer<typeof timetableListQuerySchema>;
+export type TimetableGenerateBody = z.infer<typeof timetableGenerateBodySchema>;
 export type ManualValidationBody = z.infer<typeof manualValidationBodySchema>;
 export type FreeRoomsQuery = z.infer<typeof freeRoomsQuerySchema>;

@@ -11,6 +11,7 @@ import {
 import type {
   FreeRoomsQuery,
   ManualValidationBody,
+  TimetableGenerateBody,
   TimetableListQuery,
 } from "./timetables.schema.js";
 import {
@@ -69,7 +70,8 @@ export const createTimetablesController = (
   > = timetablesService,
 ): TimetablesController => ({
   generate: AsyncHandler(async (req, res) => {
-    const data = await service.generate(getActor(req));
+    const body = validatedData<TimetableGenerateBody>(res, "body");
+    const data = await service.generate(getActor(req), body.timeLimit);
     res
       .status(202)
       .json(new ApiResponse(202, "Timetable generation queued.", data));

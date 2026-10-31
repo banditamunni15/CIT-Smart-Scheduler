@@ -213,6 +213,8 @@ def generate_exams(dataset, time_limit_s=30, workers=1):
                 if solver.Value(x[(eid, day, slot)]):
                     selected = {
                         "exam_id": eid,
+                        "course_ids": exam.get("course_ids", []),
+                        "group_ids": exam.get("groups", []),
                         "day": day,
                         "session": slot,
                         "rooms": [

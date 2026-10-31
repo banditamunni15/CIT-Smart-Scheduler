@@ -147,13 +147,17 @@ export class TimetablesRepository {
     });
   }
 
-  async enqueueGeneration(actor: TimetableActor, datasetId: string) {
+  async enqueueGeneration(
+    actor: TimetableActor,
+    datasetId: string,
+    timeLimit: number,
+  ) {
     return this.client.$transaction(async (tx) => {
       const job = await tx.job.create({
         data: {
           kind: JobKind.GENERATE_TIMETABLE,
           createdById: actor.id,
-          params: { datasetId },
+          params: { datasetId, timeLimit },
         },
       });
       await audit(tx, {
@@ -163,7 +167,7 @@ export class TimetablesRepository {
         entityType: "Job",
         entityId: job.id,
         summary: "Timetable generation was queued.",
-        details: { kind: JobKind.GENERATE_TIMETABLE, datasetId },
+        details: { kind: JobKind.GENERATE_TIMETABLE, datasetId, timeLimit },
       });
       return job;
     });

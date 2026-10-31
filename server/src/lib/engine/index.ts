@@ -113,6 +113,7 @@ export interface EngineClient {
   ): Promise<DatasetValidationResult>;
   generateTimetable(
     dataset: Prisma.InputJsonObject,
+    timeLimit?: number,
   ): Promise<TimetableGenerationResult>;
   generateExams(
     dataset: Prisma.JsonValue,
@@ -350,9 +351,14 @@ export class RealEngine implements EngineClient {
 
   async generateTimetable(
     dataset: Prisma.InputJsonObject,
+    timeLimit = 20,
   ): Promise<TimetableGenerationResult> {
     return parseTimetableResult(
-      await this.post("timetable/generate", { dataset, time_limit_s: 20 }),
+      await this.post(
+        "timetable/generate",
+        { dataset, time_limit_s: timeLimit },
+        Math.max(env.ENGINE_TIMEOUT_MS, timeLimit * 1000 + 10_000),
+      ),
     );
   }
 
@@ -415,7 +421,11 @@ export class RealEngine implements EngineClient {
     );
   }
 
-  private async post(path: string, body: unknown): Promise<unknown> {
+  private async post(
+    path: string,
+    body: unknown,
+    timeoutMs = env.ENGINE_TIMEOUT_MS,
+  ): Promise<unknown> {
     if (!env.ENGINE_URL) {
       throw new ServiceUnavailableError(
         "The scheduling engine is not configured.",
@@ -432,7 +442,7 @@ export class RealEngine implements EngineClient {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(env.ENGINE_TIMEOUT_MS),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (error) {
       throw new ServiceUnavailableError(

@@ -210,9 +210,11 @@ const mapBookingFromList = (request: {
   cancelNote: string | null;
   createdAt: Date;
   decisions: Array<{
+    id: string;
     day: string | null;
     roomId: string | null;
     status: DecisionStatus;
+    approvalState: ApprovalState;
   }>;
 }) => {
   const { decisions, ...booking } = request;
@@ -220,9 +222,11 @@ const mapBookingFromList = (request: {
     ...booking,
     currentDecision: decisions[0]
       ? {
+          id: decisions[0].id,
           day: decisions[0].day,
           roomId: decisions[0].roomId,
           status: decisions[0].status,
+          approvalState: decisions[0].approvalState,
         }
       : null,
   };
