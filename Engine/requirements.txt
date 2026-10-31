@@ -1,0 +1,7 @@
+
+fastapi
+uvicorn
+pydantic>=2
+ortools>=9.15
+pytest
+httpx2>=2.0.0
