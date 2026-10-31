@@ -1,9 +1,27 @@
 import app from "./app.js";
-
-const port = 5000;
+import { env } from "./config/env.js";
+import { examsService } from "./modules/exams/exams.service.js";
+import logger from "./utils/logger.js";
+import { timetablesService } from "./modules/timetables/timetables.service.js";
+import { bookingsService } from "./modules/bookings/bookings.service.js";
 
 (async function () {
-  app.listen(port, () => {
-    console.log(`✅✅ Server running on port ${port}...`);
+  app.listen(env.PORT, () => {
+    logger.info(`Server running on port ${env.PORT}.`);
   });
+  void examsService
+    .resumeQueuedJobs()
+    .catch((error: unknown) =>
+      logger.error("[QUEUED_JOBS_RESUME_FAILED]", error),
+    );
+  void timetablesService
+    .resumeQueuedJobs()
+    .catch((error: unknown) =>
+      logger.error("[QUEUED_TIMETABLE_JOBS_RESUME_FAILED]", error),
+    );
+  void bookingsService
+    .resumeQueuedJobs()
+    .catch((error: unknown) =>
+      logger.error("[QUEUED_BOOKING_JOBS_RESUME_FAILED]", error),
+    );
 })();
