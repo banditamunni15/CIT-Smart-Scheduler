@@ -3,6 +3,8 @@
 
 // Get a free hosted Postgres database in seconds: `npx create-db`
 
+
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -11,18 +13,141 @@ datasource db {
   provider = "postgresql"
 }
 
+// ============================================================================ enums
+
+enum Role {
+  ADMIN
+  COORDINATOR
+  FACULTY
+  CLUB
+}
+
+enum DatasetSource {
+  SEED            // loaded by the seed script / Reset demo
+  UPLOAD          // uploaded by an Admin
+  CHANGE_APPLIED  // produced by approving a change (permanent disruption)
+}
+
+enum PublishStatus {
+  DRAFT           // generated, only Admin can see it
+  PUBLISHED       // the live timetable everybody sees
+  ARCHIVED        // replaced by a newer published one
+}
+
+// The four categories a booking can have (exams and regular classes are not bookings).
+enum BookingCategory {
+  INSTITUTE_EVENT
+  GUEST_LECTURE
+  DEPARTMENT_EVENT
+  CLUB_EVENT
+}
+
+enum RequestStatus {
+  SUBMITTED
+  APPROVED
+  ALTERNATIVE_OFFERED
+  REJECTED
+  CANCELLED
+}
+
+enum DecisionStatus {
+  APPROVED
+  ALTERNATIVE_OFFERED
+  REJECTED
+}
+
+enum DecisionSource {
+  RULE_ENGINE     // decided by the Python booking engine
+  ADMIN_OVERRIDE  // an Admin changed it (still validated)
+  MANUAL          // placed by hand by an authorised role (still validated)
+}
+
+enum ApprovalState {
+  NOT_REQUIRED    // no class is moved
+  PENDING_ADMIN   // moves a class, waiting for Admin
+  APPROVED
+  REJECTED
+}
+
+enum ChangeSource {
+  ADMIN_FORM
+  ADMIN_FILE            // uploaded disruption file
+  FACULTY_ASSISTANT     // faculty typed it in plain words
+  FACULTY_UNAVAILABILITY
+  COORDINATOR_REQUEST
+  MANUAL_MOVE
+}
+
+enum ChangeStatus {
+  SUBMITTED       // waiting for the engine
+  PROPOSED        // engine found a fix, waiting for approval
+  DEPT_APPROVED   // coordinator said OK, waiting for Admin
+  APPROVED        // Admin approved and it was applied
+  REJECTED
+  IMPOSSIBLE      // engine says no valid fix; conflicts are stored
+  WITHDRAWN
+}
+
+enum JobKind {
+  GENERATE_TIMETABLE
+  GENERATE_EXAMS
+  DECIDE_BOOKINGS
+  REPAIR
+}
+
+enum JobState {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+enum LlmPurpose {
+  BOOKING_PARSE
+  FACULTY_ASSISTANT
+  EXPLAIN
+}
+
+// ============================================================================ people
+
 model User {
-  id            String    @id
+  id            String   @id
   name          String
   email         String
-  emailVerified Boolean   @default(false)
+  emailVerified Boolean  @default(false)
   image         String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  sessions      Session[]
-  accounts      Account[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // ---- our extra fields (Better Auth additionalFields, input: false)
+  role       Role    @default(CLUB)
+  department String? // coordinators (and faculty): e.g. "CSE"
+  facultyId  String? // faculty: matches faculty[].id inside the dataset JSON, e.g. "F07"
+  clubName   String? // club reps: e.g. "Dramatics Society"
+  isActive   Boolean @default(true)
+
+  // ---- Better Auth relations
+  sessions Session[]
+  accounts Account[]
+
+  // ---- our relations
+  datasetsUploaded    Dataset[]         @relation("DatasetUploader")
+  timetablesGenerated Timetable[]       @relation("TimetableGenerator")
+  timetablesPublished Timetable[]       @relation("TimetablePublisher")
+  examsGenerated      ExamSchedule[]
+  bookingRequests     BookingRequest[]
+  decisionsMade       BookingDecision[] @relation("DecisionMaker")
+  decisionsApproved   BookingDecision[] @relation("DecisionApprover")
+  changesRequested    ChangeProposal[]  @relation("ChangeRequester")
+  changesDeptApproved ChangeProposal[]  @relation("ChangeDeptApprover")
+  changesReviewed     ChangeProposal[]  @relation("ChangeReviewer")
+  jobs                Job[]
+  auditLogs           AuditLog[]
+  llmCalls            LlmCall[]
+  settingsUpdated     AppSetting[]
 
   @@unique([email])
+  @@index([role])
   @@map("user")
 }
 
@@ -72,4 +197,291 @@ model Verification {
 
   @@index([identifier])
   @@map("verification")
+}
+
+// ============================================================================ the school's data
+
+// One row = one full copy of the data file (rooms, faculty, groups, sessions, requests, exams).
+// Approving a permanent change creates a NEW row (version + 1) instead of editing the old one.
+model Dataset {
+  id         String        @id @default(cuid())
+  datasetKey String        // the "dataset_id" inside the file, e.g. "cit-public-v1"
+  label      String
+  version    Int
+  source     DatasetSource
+  data       Json          // the complete file
+  summary    Json          // counts and warnings shown after upload
+  isActive   Boolean       @default(false) // exactly one active dataset at a time (enforced in code)
+  parentId   String?
+  uploadedById String?
+  createdAt  DateTime      @default(now())
+
+  parent     Dataset?  @relation("DatasetLineage", fields: [parentId], references: [id])
+  children   Dataset[] @relation("DatasetLineage")
+  uploadedBy User?     @relation("DatasetUploader", fields: [uploadedById], references: [id])
+
+  timetables      Timetable[]
+  examSchedules   ExamSchedule[]
+  bookingRequests BookingRequest[]
+  changesBasedOn  ChangeProposal[] @relation("ChangeBaseDataset")
+  changesProduced ChangeProposal[] @relation("ChangeResultDataset")
+
+  @@unique([datasetKey, version])
+  @@index([isActive])
+  @@map("datasets")
+}
+
+// ============================================================================ schedules
+
+model Timetable {
+  id                 String        @id @default(cuid())
+  datasetId          String
+  status             PublishStatus @default(DRAFT)
+  label              String?
+  schedule           Json          // { sessions: [{session_id, day, start_period, room_id}] } (export format)
+  report             Json          // the official validator report
+  hardViolationCount Int           // must be 0 before anything is saved
+  softTotal          Int
+  softBreakdown      Json          // { S1..S6 }
+  solverMeta         Json?         // seconds, seed, solver status, time limit
+  parentId           String?       // the timetable this one was repaired from
+  generatedById      String?
+  publishedById      String?
+  publishedAt        DateTime?
+  createdAt          DateTime      @default(now())
+
+  dataset     Dataset    @relation(fields: [datasetId], references: [id])
+  parent      Timetable? @relation("TimetableLineage", fields: [parentId], references: [id])
+  children    Timetable[] @relation("TimetableLineage")
+  generatedBy User?      @relation("TimetableGenerator", fields: [generatedById], references: [id])
+  publishedBy User?      @relation("TimetablePublisher", fields: [publishedById], references: [id])
+
+  bookingDecisions BookingDecision[]
+  changesBasedOn   ChangeProposal[] @relation("ChangeBaseTimetable")
+  changesProduced  ChangeProposal[] @relation("ChangeResultTimetable")
+
+  @@index([datasetId, status])
+  @@map("timetables")
+}
+
+model ExamSchedule {
+  id                 String        @id @default(cuid())
+  datasetId          String
+  status             PublishStatus @default(DRAFT)
+  exams              Json          // [{exam_id, day, session, rooms[]}]
+  report             Json
+  hardViolationCount Int
+  softPenalty        Int
+  generatedById      String?
+  publishedAt        DateTime?
+  createdAt          DateTime      @default(now())
+
+  dataset     Dataset @relation(fields: [datasetId], references: [id])
+  generatedBy User?   @relation(fields: [generatedById], references: [id])
+
+  @@index([datasetId, status])
+  @@map("exam_schedules")
+}
+
+// ============================================================================ venue bookings
+
+model BookingRequest {
+  id                 String          @id @default(cuid())
+  datasetId          String
+  externalId         String          // "BR-07"; the app generates the same style for new requests
+  requesterId        String?         // null for requests that came with the dataset
+  requesterName      String          // "Dramatics Society"
+  requesterRole      Role
+  requestedCategory  BookingCategory // what they asked for
+  effectiveCategory  BookingCategory // after the role cap (computed by the engine)
+  title              String
+  attendance         Int
+  durationPeriods    Int
+  windows            Json            // [{day, from_period, to_period}]
+  roomTypes          String[]
+  needs              String[]
+  requestedRoom      String?
+  mandatoryForGroups String[]
+  seriesId           String?
+  rawText            String?         // the original message
+  llmDraft           Json?           // what the AI proposed, kept to compare with the final edited form
+  submittedAt        DateTime
+  status             RequestStatus   @default(SUBMITTED) // mirrors the current decision for fast lists
+  cancelledAt        DateTime?
+  cancelNote         String?
+  createdAt          DateTime        @default(now())
+
+  dataset   Dataset           @relation(fields: [datasetId], references: [id])
+  requester User?             @relation(fields: [requesterId], references: [id])
+  decisions BookingDecision[]
+
+  @@unique([datasetId, externalId])
+  @@index([datasetId, status])
+  @@index([requesterId])
+  @@index([seriesId])
+  @@map("booking_requests")
+}
+
+// History of decisions: only the newest has isCurrent = true.
+model BookingDecision {
+  id            String         @id @default(cuid())
+  requestId     String
+  timetableId   String?        // the timetable it was checked against
+  status        DecisionStatus
+  day           String?
+  startPeriod   Int?
+  endPeriod     Int?           // inclusive
+  roomId        String?
+  reason        String         // required for rejected / alternative; useful for approved too
+  source        DecisionSource
+  decidedById   String?        // null when the rule engine decided
+  approvalState ApprovalState  @default(NOT_REQUIRED)
+  approvedById  String?
+  approvedAt    DateTime?
+  isCurrent     Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+
+  request    BookingRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  timetable  Timetable?     @relation(fields: [timetableId], references: [id])
+  decidedBy  User?          @relation("DecisionMaker", fields: [decidedById], references: [id])
+  approvedBy User?          @relation("DecisionApprover", fields: [approvedById], references: [id])
+  overrides  SessionOverride[]
+
+  @@index([requestId, isCurrent])
+  @@index([approvalState])
+  @@map("booking_decisions")
+}
+
+// A regular class moved for Spectra week only, because an institute event took its room.
+model SessionOverride {
+  id         String @id @default(cuid())
+  decisionId String
+  sessionId  String
+  fromDay    String
+  fromStart  Int
+  fromRoom   String
+  toDay      String
+  toStart    Int
+  toRoom     String
+
+  decision BookingDecision @relation(fields: [decisionId], references: [id], onDelete: Cascade)
+
+  @@index([decisionId])
+  @@map("session_overrides")
+}
+
+// ============================================================================ timetable changes
+
+model ChangeProposal {
+  id                 String       @id @default(cuid())
+  source             ChangeSource
+  status             ChangeStatus @default(SUBMITTED)
+  baseDatasetId      String
+  baseTimetableId    String
+  requestedById      String
+  originalText       String?      // faculty's plain-words message, if any
+  disruption         Json         // { changes: [...] } in the official disruption format
+  proposedSchedule   Json?        // the full repaired schedule (schedule_after)
+  diff               Json?        // [{session_id, from:{day,start,room}, to:{...}}]
+  movedCount         Int?
+  timeChangedCount   Int?
+  roomOnlyCount      Int?
+  report             Json?        // official validator report on the proposal
+  conflicts          Json?        // when IMPOSSIBLE: the rules that fight each other
+  explanation        String?      // plain-words summary or reason
+  deptApprovedById   String?
+  deptApprovedAt     DateTime?
+  reviewedById       String?      // the Admin who approved or rejected
+  reviewedAt         DateTime?
+  reviewNote         String?
+  resultDatasetId    String?      // set when approved: the new dataset version
+  resultTimetableId  String?      // set when approved: the new timetable
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+
+  baseDataset     Dataset    @relation("ChangeBaseDataset", fields: [baseDatasetId], references: [id])
+  baseTimetable   Timetable  @relation("ChangeBaseTimetable", fields: [baseTimetableId], references: [id])
+  resultDataset   Dataset?   @relation("ChangeResultDataset", fields: [resultDatasetId], references: [id])
+  resultTimetable Timetable? @relation("ChangeResultTimetable", fields: [resultTimetableId], references: [id])
+  requestedBy     User       @relation("ChangeRequester", fields: [requestedById], references: [id])
+  deptApprovedBy  User?      @relation("ChangeDeptApprover", fields: [deptApprovedById], references: [id])
+  reviewedBy      User?      @relation("ChangeReviewer", fields: [reviewedById], references: [id])
+
+  @@index([status])
+  @@index([requestedById])
+  @@map("change_proposals")
+}
+
+// ============================================================================ plumbing
+
+model Job {
+  id          String   @id @default(cuid())
+  kind        JobKind
+  state       JobState @default(QUEUED)
+  progress    Int      @default(0) // 0..100
+  message     String?             // "solving... best score so far 190"
+  params      Json?
+  resultType  String?             // "Timetable" | "ExamSchedule" | "ChangeProposal" | ...
+  resultId    String?
+  error       String?
+  createdById String?
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  createdAt   DateTime @default(now())
+
+  createdBy User? @relation(fields: [createdById], references: [id])
+
+  @@index([state])
+  @@map("jobs")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?  // null = system
+  actorRole  Role?
+  action     String   // "TIMETABLE_PUBLISHED", "CHANGE_APPROVED", "BOOKING_DECIDED", "DEMO_RESET", ...
+  entityType String
+  entityId   String?
+  summary    String
+  details    Json?
+  createdAt  DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// Every call to the language model, so AI use can be reviewed and declared honestly.
+model LlmCall {
+  id             String     @id @default(cuid())
+  userId         String?
+  purpose        LlmPurpose
+  model          String
+  promptVersion  String     // matches the file in server/src/llm/prompts
+  input          String
+  output         Json?
+  validationOk   Boolean?   // did our own checks accept the output?
+  rejectedReason String?
+  latencyMs      Int?
+  error          String?
+  createdAt      DateTime   @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([purpose, createdAt])
+  @@map("llm_calls")
+}
+
+// Small settings, e.g. key = "priority_order" (the Admin can change it).
+model AppSetting {
+  key         String   @id
+  value       Json
+  updatedById String?
+  updatedAt   DateTime @updatedAt
+
+  updatedBy User? @relation(fields: [updatedById], references: [id])
+
+  @@map("app_settings")
 }
