@@ -65,7 +65,7 @@ enum DecisionSource {
 enum ApprovalState {
   NOT_REQUIRED    // no class is moved
   PENDING_ADMIN   // moves a class, waiting for Admin
-  DEPT_APPROVED   // coordinator approved a lab booking; waiting for Admin
+  DEPT_APPROVED   // coordinator approved; waiting for Admin
   APPROVED
   REJECTED
 }

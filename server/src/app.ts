@@ -21,12 +21,12 @@ const app: Express = express();
 app.use(
   cors({
     origin: env.CLIENT_ORIGIN,
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     credentials: true,
     allowedHeaders: ["Content-Type", "Authorization"],
   }),
 );
-app.options(/.*/, cors());
+
 app.all("/api/auth/*splat", toNodeHandler(auth));
 
 app.use(express.json({ limit: "10mb" }));
