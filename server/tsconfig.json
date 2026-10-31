@@ -11,8 +11,6 @@
     "target": "esnext",
     // For nodejs:
     "lib": ["esnext"],
-    "types": ["node"],
-
     // Other Outputs
     "sourceMap": true,
     "declaration": true,

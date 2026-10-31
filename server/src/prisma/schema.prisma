@@ -395,6 +395,7 @@ enum DecisionSource {
 enum ApprovalState {
   NOT_REQUIRED
   PENDING_ADMIN
+  DEPT_APPROVED
   APPROVED
   REJECTED
 }

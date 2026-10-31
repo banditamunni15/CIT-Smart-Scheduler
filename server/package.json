@@ -1,26 +1,32 @@
 {
   "name": "server",
   "version": "1.0.0",
-  "description": "",
-  "main": "src/server.js",
+  "private": true,
+  "description": "Backend API server",
+  "main": "dist/server.js",
+  "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc",
+    "build": "prisma generate && tsc",
     "start": "node dist/server.js",
     "generate": "prisma generate",
     "seed:demo-users": "tsx scripts/seed-demo-users.ts",
-    "test": "vitest run src && tsc --noEmit -p tsconfig.test.json",
-    "postinstall": "prisma skills sync || exit 0"
+    "test": "vitest run src && tsc --noEmit -p tsconfig.test.json"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "devEngines": {
-    "packageManager": {
-      "name": "pnpm",
-      "version": "^11.12.0",
-      "onFail": "download"
-    }
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "^7.10.1",
+    "@prisma/client": "^7.10.1",
+    "better-auth": "^1.7.14",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "ioredis": "^5.10.1",
+    "multer": "^2.5.0",
+    "pg": "^8.23.1",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
@@ -35,18 +41,5 @@
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",
     "vitest": "^5.0.5"
-  },
-  "dependencies": {
-    "@prisma/adapter-pg": "^7.10.1",
-    "@prisma/client": "^7.10.1",
-    "better-auth": "^1.7.14",
-    "cors": "^2.8.6",
-    "dotenv": "^17.4.2",
-    "express": "^5.2.1",
-    "ioredis": "^5.10.1",
-    "multer": "^2.5.0",
-    "pg": "^8.23.1",
-    "zod": "^4.3.6"
-  },
-  "type": "module"
+  }
 }
