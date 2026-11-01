@@ -13,6 +13,8 @@ const envSchema = z.object({
   ENGINE_MOCK_BOOKING_DRAFT_RESULT: z.string().optional(),
   ENGINE_MOCK_BOOKING_DECISIONS_RESULT: z.string().optional(),
   ENGINE_MOCK_REPAIR_RESULT: z.string().optional(),
+  OPENAI_API_KEY: z.string().trim().min(1).optional(),
+  OPENAI_MODEL: z.string().trim().min(1).default("gpt-4o-mini"),
 });
 
 export const env = envSchema.parse(process.env);

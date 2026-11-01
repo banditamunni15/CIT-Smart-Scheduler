@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { cn } from "cn";
 import type { ReactNode } from "react";
 import {
   normalizeEntry,
@@ -55,6 +56,58 @@ function kindLabel(kind: string) {
   return kind;
 }
 
+type KindTone = { card: string; text: string; tag: string; dot: string };
+
+const kindTones: Record<string, KindTone> = {
+  Lab: {
+    card: "border-emerald-200 border-l-emerald-500 bg-emerald-50 hover:bg-emerald-100/70",
+    text: "text-emerald-900",
+    tag: "border-emerald-300 bg-emerald-100 text-emerald-700",
+    dot: "bg-emerald-500",
+  },
+  L: {
+    card: "border-indigo-200 border-l-indigo-500 bg-indigo-50 hover:bg-indigo-100/70",
+    text: "text-indigo-900",
+    tag: "border-indigo-300 bg-indigo-100 text-indigo-700",
+    dot: "bg-indigo-500",
+  },
+  T: {
+    card: "border-amber-200 border-l-amber-500 bg-amber-50 hover:bg-amber-100/70",
+    text: "text-amber-900",
+    tag: "border-amber-300 bg-amber-100 text-amber-700",
+    dot: "bg-amber-500",
+  },
+};
+
+const fallbackTone: KindTone = {
+  card: "border-slate-200 border-l-slate-400 bg-slate-50 hover:bg-slate-100",
+  text: "text-slate-900",
+  tag: "border-slate-300 bg-slate-100 text-slate-600",
+  dot: "bg-slate-400",
+};
+
+function toneFor(kind: string): KindTone {
+  return kindTones[kindLabel(kind)] ?? fallbackTone;
+}
+
+function Legend() {
+  const items: Array<[string, KindTone]> = [
+    ["Lecture", kindTones.L ?? fallbackTone],
+    ["Lab", kindTones.Lab ?? fallbackTone],
+    ["Tutorial", kindTones.T ?? fallbackTone],
+  ];
+  return (
+    <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+      {items.map(([label, tone]) => (
+        <span key={label} className="inline-flex items-center gap-1.5">
+          <span aria-hidden="true" className={cn("size-2.5 rounded-full", tone.dot)} />
+          {label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 export function TimetableGrid({
   entries,
   mode,
@@ -76,14 +129,15 @@ export function TimetableGrid({
 
   return (
     <>
-      <div className="overflow-x-auto rounded-lg border bg-card">
+      <Legend />
+      <div className="overflow-x-auto rounded-xl border bg-card shadow-soft">
         <div className="min-w-[900px]">
-          <div className="grid grid-cols-[76px_repeat(5,minmax(160px,1fr))] border-b bg-muted/40">
+          <div className="grid grid-cols-[76px_repeat(5,minmax(160px,1fr))] border-b bg-linear-to-r from-indigo-50 to-violet-50">
             <div className="h-11 border-r" />
             {days.map((day) => (
               <div
                 key={day}
-                className="flex h-11 items-center justify-center border-r text-xs font-semibold uppercase tracking-wide text-muted-foreground last:border-r-0"
+                className="flex h-11 items-center justify-center border-r text-xs font-bold uppercase tracking-wide text-indigo-900/80 last:border-r-0"
               >
                 {day}
               </div>
@@ -100,11 +154,11 @@ export function TimetableGrid({
                   className="flex flex-col justify-center border-b px-2 text-[11px] leading-4 text-muted-foreground"
                   style={{ gridRow: rowForPeriod(period) }}
                 >
-                  <span className="font-medium text-foreground">P{period}</span>
+                  <span className="font-semibold text-indigo-700">P{period}</span>
                   <span>{periodTimes[period]}</span>
                 </div>
               ))}
-              <div className="flex items-center justify-center border-b bg-muted/70 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground" style={{ gridRow: 6 }}>
+              <div className="flex items-center justify-center border-b bg-amber-50 text-[10px] font-bold uppercase tracking-wide text-amber-700" style={{ gridRow: 6 }}>
                 Lunch
               </div>
             </div>
@@ -166,7 +220,7 @@ export function TimetableGrid({
                     />
                   ))}
                   <div
-                    className="pointer-events-none border-y bg-muted/50"
+                    className="pointer-events-none border-y bg-amber-50/70"
                     style={{ gridColumn: "1 / -1", gridRow: 6 }}
                   />
                   {dailyEntries.map((entry) => {
@@ -182,24 +236,28 @@ export function TimetableGrid({
                       entry.startPeriod <= 5 ? 5 : 9,
                     );
                     const lane = laneById.get(entry.id) ?? 0;
+                    const tone = toneFor(entry.kind);
                     return (
                       <button
                         key={entry.id}
                         type="button"
                         onClick={() => openEntry(entry)}
                         aria-label={`${entry.courseTitle}, ${slotFor(entry, mode)}, ${day} period ${entry.startPeriod}`}
-                        className="z-10 m-1 flex min-w-0 flex-col items-start overflow-hidden rounded-md border border-gray-200 bg-white p-1.5 text-left text-xs hover:bg-gray-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                        className={cn(
+                          "z-10 m-1 flex min-w-0 flex-col items-start overflow-hidden rounded-lg border border-l-4 p-1.5 text-left text-xs shadow-xs transition-shadow hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+                          tone.card,
+                        )}
                         style={{
                           gridColumn: `${lane + 1}`,
                           gridRow: `${rowForPeriod(entry.startPeriod)} / ${rowForPeriod(endPeriod) + 1}`,
                         }}
                       >
-                        <span className="w-full truncate font-semibold">
+                        <span className={cn("w-full truncate font-semibold", tone.text)}>
                           {entry.courseId}
                         </span>
                         <span className="flex w-full min-w-0 items-center gap-1 text-muted-foreground">
                           <span className="min-w-0 flex-1 truncate">{entry.roomId}</span>
-                          <span className="shrink-0 rounded border px-1.5 py-0.5 text-[10px] leading-3">
+                          <span className={cn("shrink-0 rounded border px-1.5 py-0.5 text-[10px] leading-3 font-semibold", tone.tag)}>
                             {kindLabel(entry.kind)}
                           </span>
                         </span>

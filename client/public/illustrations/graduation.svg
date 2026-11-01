@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none" role="img" aria-label="Graduation cap and diploma">
+  <defs>
+    <linearGradient id="cap" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6366F1"/><stop offset="1" stop-color="#7C3AED"/></linearGradient>
+    <linearGradient id="capd" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4338CA"/><stop offset="1" stop-color="#3730A3"/></linearGradient>
+  </defs>
+  <circle cx="100" cy="104" r="84" fill="#EEF2FF"/>
+  <path d="M58 100 v34 c0 14 84 14 84 0 v-34 l-42 22 z" fill="url(#capd)"/>
+  <path d="M100 52 L180 90 L100 128 L20 90 Z" fill="url(#cap)"/>
+  <path d="M100 52 L180 90 L100 90 Z" fill="#fff" opacity=".14"/>
+  <circle cx="100" cy="90" r="5" fill="#FBBF24"/>
+  <path d="M100 90 L158 108 V140" stroke="#FBBF24" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="151" y="138" width="14" height="20" rx="5" fill="#F59E0B"/>
+  <rect x="118" y="146" width="70" height="16" rx="8" fill="#fff" stroke="#C7D2FE" stroke-width="2" transform="rotate(-14 153 154)"/>
+  <rect x="148" y="142" width="8" height="24" rx="2" fill="#F43F5E" transform="rotate(-14 153 154)"/>
+</svg>

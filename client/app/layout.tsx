@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Inter, Plus_Jakarta_Sans } from "next/font/google";
 import type { ReactNode } from "react";
 import { AuthProvider } from "@/lib/session";
 import { Toaster } from "sonner";
@@ -11,14 +11,19 @@ const inter = Inter({
   subsets: ["latin"],
 });
 
+const jakarta = Plus_Jakarta_Sans({
+  variable: "--font-jakarta",
+  subsets: ["latin"],
+});
+
 export const metadata: Metadata = {
   title: "CIT Scheduler",
-  description: "Scheduling platform for CIT.",
+  description: "Timetables, exams and venue bookings for Chilika Institute of Technology.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" className={`${inter.variable} h-full antialiased`}>
+    <html lang="en" className={`${inter.variable} ${jakarta.variable} h-full antialiased`}>
       <body className="min-h-full">
         <AuthProvider>
           <TooltipProvider>
@@ -27,7 +32,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
               position="top-right"
               toastOptions={{
                 classNames: {
-                  toast: "border border-gray-200 bg-white text-gray-950 shadow-xs",
+                  toast: "border border-indigo-100 bg-white text-slate-900 shadow-lg",
                 },
               }}
             />

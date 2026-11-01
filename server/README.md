@@ -3,6 +3,16 @@
 The server is an Express API. Exam scheduling is delegated to the Python
 engine; the server stores validated schedules and exposes authenticated views.
 
+## Scheduler assistant
+
+The authenticated `POST /api/assistant/chat` endpoint answers questions using
+the active dataset, published timetable and exam schedule, and the signed-in
+user's own recent booking, change-request, and job status. It is read-only and
+does not send draft schedules or other users' private records to the model.
+Configure `OPENAI_API_KEY` on the server to enable it; `OPENAI_MODEL` defaults
+to `gpt-4o-mini`. Chat messages are not persisted by the application or in
+OpenAI Responses API storage.
+
 ## Phase 0 endpoints
 
 | Method | Path          | Access                    | Purpose                              |
